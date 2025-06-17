@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:rhythm/src/components/miniplayer/mini_player.dart';
+import 'package:rhythm/view/mainscreen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -11,21 +13,45 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Rhythm',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
       home: const MainScreen(),
+      builder: (context, child) {
+        return FullScreenBuilder(child: child!);
+      },
     );
   }
 }
 
-
-class MainScreen extends StatelessWidget {
-  const MainScreen({super.key});
-
+class FullScreenBuilder extends StatefulWidget {
+  final Widget child;
+  const FullScreenBuilder({super.key, required this.child});
+ 
+  @override
+  State<FullScreenBuilder> createState() =>
+      _FullScreenBuilderState();
+}
+ 
+class _FullScreenBuilderState extends State<FullScreenBuilder> {
+ 
+  @override
+  void initState() {
+    super.initState();
+  }
+ 
   @override
   Widget build(BuildContext context) {
-    return Container();
+    return Material(
+      child: Stack(
+        children: [
+          widget.child,
+          Positioned.fill(
+            child: DraggableMiniPlayer()
+          ),
+        ],
+      ),
+    );
   }
 }
