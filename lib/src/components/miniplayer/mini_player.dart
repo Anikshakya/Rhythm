@@ -41,8 +41,6 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer> with SingleTi
   final double _minHeight = 80.0;
   late double _maxHeight;
 
-  bool get _isExpanded => _controller.value > 0.5;
-
   @override
   void initState() {
     super.initState();

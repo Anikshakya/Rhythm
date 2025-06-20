@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rhythm/controllers/audio_controller.dart';
 import 'package:rhythm/src/components/miniplayer/mini_player.dart';
 import 'package:rhythm/view/mainscreen.dart';
 
@@ -39,7 +40,13 @@ class _FullScreenBuilderState extends State<FullScreenBuilder> {
   @override
   void initState() {
     super.initState();
+    initialize();
   }
+
+  // Initialize
+  initialize() async{
+    await MyAudioController().fetchSongs();
+  } 
  
   @override
   Widget build(BuildContext context) {
