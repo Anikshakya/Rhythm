@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'dart:math';
+import 'dart:ui';
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:on_audio_query/on_audio_query.dart';
-import 'package:rhythm/controllers/audio_controller.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:rhythm/src/audio_services/audio_handler.dart';
+import 'package:rhythm/main.dart';
 import 'package:rhythm/src/components/miniplayer/miniplayer_base.dart';
 import 'package:rhythm/src/components/miniplayer/miniplayer_controller.dart';
+import 'package:rxdart/rxdart.dart' as rx;
 
 class FadeIgnoreTransition extends AnimatedWidget {
   final Animation<double> opacity;
@@ -34,7 +40,7 @@ class DraggableMiniPlayer extends StatefulWidget {
   const DraggableMiniPlayer({super.key});
 
   @override
-  _DraggableMiniPlayerState createState() => _DraggableMiniPlayerState();
+  State<DraggableMiniPlayer> createState() => _DraggableMiniPlayerState();
 }
 
 class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
@@ -42,7 +48,7 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
   late AnimationController _controller;
   final double _minHeight = 80.0;
   late double _maxHeight;
-  final MyAudioController _audioController = Get.put(MyAudioController());
+  final AudioPlayerController controller = Get.put(AudioPlayerController());
 
   @override
   void initState() {
@@ -52,13 +58,13 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
       duration: const Duration(milliseconds: 300),
       value: 0.0,
     );
-    _maxHeight = 300.0; // Placeholder, updated in didChangeDependencies
+    _maxHeight = 300.0;
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _maxHeight = MediaQuery.of(context).size.height; // Full screen height
+    _maxHeight = MediaQuery.of(context).size.height;
     MiniPlayerController.inst.init(_controller, context);
   }
 
@@ -83,171 +89,157 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
   Widget build(BuildContext context) {
     final opacityAnimation = _createOpacityAnimation((cp) => cp);
     final inverseOpacityAnimation = _createOpacityAnimation((cp) => 1.0 - cp);
+    if (controller.currentMediaItem.value == null)
+      return SizedBox();
+    return  MiniplayerRaw(
+              builder: (maxOffset, bounceUp, bounceDown, topInset, bottomInset,
+                  rightInset, screenSize, sMaxOffset, p, cp, ip, icp, rp, rcp, qp,
+                  qcp, bp, bcp, miniplayerbottomnavheight, bottomOffset, navBarHeight) {
+                final height = lerpDouble(_minHeight, _maxHeight, cp)!;
+                final borderRadius = BorderRadius.vertical(
+                  top: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
+                  bottom: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
+                );
+                var padding = lerpDouble(10.0, 0.0, cp)!;
 
-    return Obx(() {
-      final handler = _audioController.audioHandler;
-      final currentSong = handler.songQueue.isNotEmpty &&
-              handler.currentIndex.value < handler.songQueue.length
-          ? handler.songQueue[handler.currentIndex.value]
-          : null;
-
-      if (currentSong == null) {
-        return const SizedBox.shrink(); // Hide player if no song is playing
-      }
-
-      return MiniplayerRaw(
-        builder: (maxOffset, bounceUp, bounceDown, topInset, bottomInset,
-            rightInset, screenSize, sMaxOffset, p, cp, ip, icp, rp, rcp, qp,
-            qcp, bp, bcp, miniplayerbottomnavheight, bottomOffset, navBarHeight) {
-          final height = velpy(a: _minHeight, b: _maxHeight, c: cp);
-          final borderRadius = BorderRadius.vertical(
-            top: Radius.circular((18.0 + (20.0 - 18.0) * cp) - cp * 20),
-            bottom: Radius.circular((18.0 + (20.0 - 18.0) * cp) - cp * 20),
-          );
-          var padding = 10.0 - cp * 10;
-
-          return SizedBox.expand(
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: bottomOffset,
-                  child: SafeArea(
-                    top: false,
-                    child: Container(
-                      margin: EdgeInsets.all(padding),
-                      height: height,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.blueGrey[900],
-                        borderRadius: borderRadius,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2 + 0.1 * cp),
-                            blurRadius: 20,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        children: [
-                          FadeIgnoreTransition(
-                            opacity: inverseOpacityAnimation,
-                            child: _buildMiniPlayer(currentSong),
-                          ),
-                          FadeIgnoreTransition(
-                            opacity: opacityAnimation,
-                            child: _buildExpandedPlayer(
-                              currentSong: currentSong,
+                return SizedBox.expand(
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: bottomOffset,
+                        child: SafeArea(
+                          top: false,
+                          child: Container(
+                            margin: EdgeInsets.all(padding),
+                            height: height,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.blueGrey[900],
                               borderRadius: borderRadius,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2 + 0.1 * cp),
+                                  blurRadius: 20,
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                            child: Stack(
+                              children: [
+                                FadeIgnoreTransition(
+                                  opacity: inverseOpacityAnimation,
+                                  child: _buildMiniPlayer(controller.currentMediaItem.value!),
+                                ),
+                                FadeIgnoreTransition(
+                                  opacity: opacityAnimation,
+                                  child: _buildExpandedPlayer(
+                                    borderRadius: borderRadius,
+                                    mediaItem: controller.currentMediaItem.value!,
+                                  ),
+                                ),
+                                Positioned(
+                                  top: 12,
+                                  right: 12,
+                                  child: FadeIgnoreTransition(
+                                    opacity: opacityAnimation,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.close, color: Colors.white),
+                                      onPressed: () => _controller.reverse(),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          Positioned(
-                            top: 12,
-                            right: 12,
-                            child: FadeIgnoreTransition(
-                              opacity: opacityAnimation,
-                              child: IconButton(
-                                icon:
-                                    const Icon(Icons.close, color: Colors.white),
-                                onPressed: () => _controller.reverse(),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    });
+                );
+              },
+            );
+          
   }
 
-  Widget _buildMiniPlayer(SongModel currentSong) {
-    return Row(
-      children: [
-        QueryArtworkWidget(
-          id: currentSong.id,
-          type: ArtworkType.AUDIO,
-          artworkWidth: 60,
-          artworkHeight: 60,
-          artworkBorder: BorderRadius.circular(8),
-          nullArtworkWidget: Container(
+  Widget _buildMiniPlayer(MediaItem mediaItem) {
+    return GestureDetector(
+      onTap: () => _controller.forward(),
+      child: Row(
+        children: [
+          Container(
             width: 60,
             height: 60,
             margin: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: Colors.blue,
               borderRadius: BorderRadius.circular(8),
+              image: _buildArtworkDecoration(mediaItem),
             ),
-            child: const Icon(Icons.music_note, color: Colors.white),
+            child: _shouldShowFallbackIcon(mediaItem)
+                ? const Icon(Icons.music_note, color: Colors.white)
+                : null,
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                currentSong.title,
-                style: const TextStyle(color: Colors.white),
-                overflow: TextOverflow.ellipsis,
-              ),
-              Text(
-                currentSong.artist ?? "Unknown Artist",
-                style: const TextStyle(color: Colors.white70),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  mediaItem.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  mediaItem.artist ?? 'Unknown Artist',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
-          ),
-        StreamBuilder<bool>(
-          stream: _audioController.audioHandler.isPlaying.stream,
-          builder: (context, snapshot) {
-            final isPlaying = snapshot.data ?? false;
-            return IconButton(
-              icon: Icon(
-                isPlaying ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
-              ),
-              onPressed: isPlaying
-                  ? _audioController.audioHandler.pause
-                  : _audioController.audioHandler.play,
-            );
-          }
-        )
-      ],
+          // IconButton(
+          //   icon: Icon(
+          //     isPlaying ? Icons.pause : Icons.play_arrow,
+          //     color: Colors.white,
+          //   ),
+          //   onPressed: () {
+          //   },
+          // ),
+        ],
+      ),
     );
   }
 
   Widget _buildExpandedPlayer({
-    required SongModel currentSong,
     required BorderRadius borderRadius,
+    required MediaItem mediaItem,
   }) {
     return Column(
       children: [
         Expanded(
-          child: QueryArtworkWidget(
-            id: currentSong.id,
-            type: ArtworkType.AUDIO,
-            // artworkBorder: BorderRadius.radius(borderRadius.top),
-            nullArtworkWidget: Container(
-              decoration: BoxDecoration(
-                color: Colors.blue,
-                borderRadius: borderRadius,
-              ),
-              child: const Center(
-                child: Icon(Icons.music_note, size: 100, color: Colors.white),
-              ),
-              ),
+          child: Container(
+            margin: const EdgeInsets.all(30),
+            decoration: BoxDecoration(
+              color: Colors.blue,
+              borderRadius: BorderRadius.circular(16),
+              image: _buildArtworkDecoration(mediaItem),
             ),
+            child: _shouldShowFallbackIcon(mediaItem)
+                ? const Center(
+                    child: Icon(Icons.music_note, color: Colors.white, size: 64),
+                  )
+                : null,
           ),
+        ),
         SafeArea(
           top: false,
           child: SingleChildScrollView(
@@ -256,101 +248,17 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    currentSong.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "${currentSong.artist ?? 'Unknown Artist'} • ${currentSong.album ?? 'Unknown Album'}",
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 16),
-                  StreamBuilder<Duration>(
-                    stream: _audioController.audioHandler.positionStream,
-                    builder: (context, positionSnapshot) {
-                      final position = positionSnapshot.data ?? Duration.zero;
-                      return StreamBuilder<Duration?>(
-                        stream: _audioController.audioHandler.durationStream,
-                        builder: (context, durationSnapshot) {
-                          final duration = durationSnapshot.data ?? Duration.zero;
-                          return Column(
-                            children: [
-                              Slider(
-                                value: position.inSeconds.toDouble().clamp(
-                                    0.0, duration.inSeconds.toDouble()),
-                                max: duration.inSeconds.toDouble(),
-                                activeColor: Colors.blue,
-                                inactiveColor: Colors.white24,
-                                onChanged: (value) =>
-                                    _audioController.audioHandler
-                                        .seek(Duration(seconds: value.toInt())),
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    _formatDuration(position),
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 12),
-                                  ),
-                                  Text(
-                                    _formatDuration(duration),
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 12),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          );
-                        },
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.skip_previous,
-                            color: Colors.white, size: 32),
-                        onPressed: _audioController.audioHandler.skipToPrevious,
-                      ),
-                      StreamBuilder<bool>(
-                        stream: _audioController.audioHandler.isPlaying.stream,
-                        builder: (context, snapshot) {
-                          final isPlaying = snapshot.data ?? false;
-                          return IconButton(
-                            icon: Icon(
-                              isPlaying ? Icons.pause : Icons.play_arrow,
-                              color: Colors.white,
-                              size: 40,
-                            ),
-                            onPressed: isPlaying
-                                ? _audioController.audioHandler.pause
-                                : _audioController.audioHandler.play,
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.skip_next,
-                            color: Colors.white, size: 32),
-                        onPressed: _audioController.audioHandler.skipToNext,
-                      ),
+                  Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (controller.currentMediaItem.value != null)
+                    _buildNowPlaying(controller.currentMediaItem.value!),
+                  
+                    _buildProgressBar(),
+                    
+                    _buildControls(),
                     ],
-                  ),
-                  const SizedBox(height: 16),
+                  )
                 ],
               ),
             ),
@@ -360,9 +268,177 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
     );
   }
 
+  DecorationImage? _buildArtworkDecoration(MediaItem mediaItem) {
+    try {
+      final artUri = mediaItem.artUri;
+      if (artUri != null) {
+        if (artUri.scheme == 'file') {
+          final file = File(artUri.path);
+          if (file.existsSync()) {
+            return DecorationImage(
+              image: FileImage(file),
+              fit: BoxFit.cover,
+            );
+          }
+        } else if (artUri.scheme == 'http' || artUri.scheme == 'https') {
+          return DecorationImage(
+            image: NetworkImage(artUri.toString()),
+            fit: BoxFit.cover,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading artwork: $e');
+    }
+    return null;
+  }
+
+  bool _shouldShowFallbackIcon(MediaItem mediaItem) {
+    try {
+      final artUri = mediaItem.artUri;
+      if (artUri == null) return true;
+      
+      if (artUri.scheme == 'file') {
+        final file = File(artUri.path);
+        return !file.existsSync();
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Error checking artwork existence: $e');
+      return true;
+    }
+  }
+
+  
+
+  Widget _buildNowPlaying(MediaItem mediaItem) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          SizedBox(height: 16),
+          Text(
+            mediaItem.title, 
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            mediaItem.artist ?? 'Unknown Artist',
+            style: TextStyle(fontSize: 18),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            mediaItem.album ?? 'Unknown Album',
+            style: TextStyle(fontSize: 16),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        children: [
+          Obx(() {
+            final position = controller.position.value;
+            final duration = controller.duration.value;
+            return Slider(
+              min: 0,
+              max: duration.inMilliseconds.toDouble(),
+              value: min(position.inMilliseconds.toDouble(), duration.inMilliseconds.toDouble()),
+              onChanged: (value) {
+                controller.position.value = Duration(milliseconds: value.toInt());
+              },
+              onChangeEnd: (value) {
+                controller.seek(Duration(milliseconds: value.toInt()));
+              },
+            );
+          }),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Obx(() {
+              final position = controller.position.value;
+              final duration = controller.duration.value;
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_formatDuration(position)),
+                  Text(_formatDuration(duration)),
+                ],
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControls() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                icon: Icon(Icons.skip_previous, size: 40),
+                onPressed: controller.skipToPrevious,
+              ),
+              Obx(() => IconButton(
+                icon: Icon(
+                  controller.isPlaying.value ? Icons.pause : Icons.play_arrow, 
+                  size: 50
+                ),
+                onPressed: controller.playPause,
+              )),
+              IconButton(
+                icon: Icon(Icons.skip_next, size: 40),
+                onPressed: controller.skipToNext,
+              ),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Obx(() => IconButton(
+                icon: Icon(
+                  controller.loopMode.value == LoopMode.one 
+                    ? Icons.repeat_one 
+                    : Icons.repeat,
+                  color: controller.loopMode.value != LoopMode.off 
+                    ? Colors.blue 
+                    : Colors.grey,
+                ),
+                onPressed: controller.toggleRepeat,
+              )),
+              Obx(() => IconButton(
+                icon: Icon(Icons.shuffle),
+                color: controller.isShuffleEnabled.value 
+                  ? Colors.blue 
+                  : Colors.grey,
+                onPressed: controller.toggleShuffle,
+              )),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
+
   String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
     final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds % 60;
-    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+    final seconds = duration.inSeconds.remainder(60);
+    return '$minutes:${twoDigits(seconds)}';
   }
 }
