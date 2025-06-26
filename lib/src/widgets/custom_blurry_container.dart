@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:get/get.dart';
+import 'package:rhythm/src/controllers/audio_controller.dart';
 
 class SleepTimerManager {
   static final SleepTimerManager _instance = SleepTimerManager._internal();
@@ -9,6 +10,9 @@ class SleepTimerManager {
 
   final Rx<SleepTimerConfig> config = SleepTimerConfig().obs;
   Timer? _timer;
+  int _playedItemsCount = 0;
+
+  AudioPlayerController get _audioController => Get.find<AudioPlayerController>();
 
   void startTimer() {
     if (_timer != null) _timer!.cancel();
@@ -16,24 +20,79 @@ class SleepTimerManager {
     if (config.value.enableSleepAfterMins) {
       _startMinuteTimer();
     } else if (config.value.enableSleepAfterItems) {
-      // Implement track count monitoring logic here
+      _playedItemsCount = 0;
+      debugPrint("Track-based timer started - will stop after ${config.value.sleepAfterItems} tracks");
+    }
+  }
+
+  void trackPlayed() {
+    if (!config.value.enableSleepAfterItems) return;
+    
+    _playedItemsCount++;
+    debugPrint("Track played: $_playedItemsCount/${config.value.sleepAfterItems}");
+    
+    if (_playedItemsCount >= config.value.sleepAfterItems) {
+      _stopPlayback();
+      resetTimer();
     }
   }
 
   void _startMinuteTimer() {
     _timer = Timer(Duration(minutes: config.value.sleepAfterMin), () {
-      // Implement sleep logic (pause/stop playback)
+      debugPrint("Time-based timer completed");
+      _stopPlayback();
       resetTimer();
     });
+    debugPrint("Time-based timer started - will stop after ${config.value.sleepAfterMin} minutes");
+  }
+
+  Future<void> _stopPlayback() async {
+    try {
+      debugPrint("Attempting to stop playback...");
+      _audioController.stopPlaying(); // First try to stop completely
+      debugPrint("Playback stopped successfully");
+      
+      Get.snackbar(
+        'Sleep Timer', 
+        'Playback stopped',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: Duration(seconds: 3),
+      );
+    } catch (e) {
+      debugPrint("Error stopping playback: $e");
+      try {
+        debugPrint("Attempting to pause instead...");
+        _audioController.stopPlaying();
+        debugPrint("Playback paused successfully");
+        
+        Get.snackbar(
+          'Sleep Timer', 
+          'Playback paused',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: Duration(seconds: 3),
+        );
+      } catch (e) {
+        debugPrint("Error pausing playback: $e");
+        Get.snackbar(
+          'Error', 
+          'Could not stop playback',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: Duration(seconds: 3),
+        );
+      }
+    }
   }
 
   void resetTimer() {
+    debugPrint("Resetting timer...");
     _timer?.cancel();
     _timer = null;
+    _playedItemsCount = 0;
     config.update((val) {
       val?.enableSleepAfterMins = false;
       val?.enableSleepAfterItems = false;
     });
+    debugPrint("Timer reset complete");
   }
 
   void updateConfig({
@@ -42,6 +101,7 @@ class SleepTimerManager {
     int? sleepAfterMin,
     int? sleepAfterItems,
   }) {
+    debugPrint("Updating timer configuration...");
     config.update((val) {
       if (val != null) {
         val.enableSleepAfterMins = enableSleepAfterMins ?? val.enableSleepAfterMins;
@@ -60,7 +120,7 @@ class SleepTimerManager {
 
     Get.dialog(
       CustomBlurryDialog(
-        title: 'Sleep After',
+        title: 'Sleep Timer',
         icon: Icons.timer,
         normalTitleStyle: true,
         actions: [
@@ -76,6 +136,12 @@ class SleepTimerManager {
                     onPressed: () {
                       manager.resetTimer();
                       Get.back();
+                      Get.snackbar(
+                        'Sleep Timer Stopped',
+                        '',
+                        snackPosition: SnackPosition.BOTTOM,
+                        duration: Duration(seconds: 2),
+                      );
                     },
                   )
                 : TextButton(
@@ -87,6 +153,14 @@ class SleepTimerManager {
                           enableSleepAfterItems: tracks.value > 0,
                           sleepAfterMin: minutes.value,
                           sleepAfterItems: tracks.value,
+                        );
+                        Get.snackbar(
+                          'Sleep Timer Started',
+                          minutes.value > 0 
+                            ? 'Will stop after ${minutes.value} minutes'
+                            : 'Will stop after ${tracks.value} tracks',
+                          snackPosition: SnackPosition.BOTTOM,
+                          duration: Duration(seconds: 3),
                         );
                       }
                       Get.back();

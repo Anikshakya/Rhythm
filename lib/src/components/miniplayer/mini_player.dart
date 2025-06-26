@@ -5,11 +5,9 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:rhythm/src/audio_services/audio_handler.dart';
-import 'package:rhythm/main.dart';
 import 'package:rhythm/src/components/miniplayer/miniplayer_base.dart';
 import 'package:rhythm/src/components/miniplayer/miniplayer_controller.dart';
-import 'package:rxdart/rxdart.dart' as rx;
+import 'package:rhythm/src/controllers/audio_controller.dart';
 
 class FadeIgnoreTransition extends AnimatedWidget {
   final Animation<double> opacity;
@@ -49,6 +47,10 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
   final double _minHeight = 80.0;
   late double _maxHeight;
   final AudioPlayerController controller = Get.put(AudioPlayerController());
+  final ColorScheme _colorScheme = ColorScheme.fromSeed(
+    seedColor: Colors.deepPurple,
+    brightness: Brightness.dark,
+  );
 
   @override
   void initState() {
@@ -89,132 +91,137 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
   Widget build(BuildContext context) {
     final opacityAnimation = _createOpacityAnimation((cp) => cp);
     final inverseOpacityAnimation = _createOpacityAnimation((cp) => 1.0 - cp);
-    if (controller.currentMediaItem.value == null)
-      return SizedBox();
-    return  MiniplayerRaw(
-              builder: (maxOffset, bounceUp, bounceDown, topInset, bottomInset,
-                  rightInset, screenSize, sMaxOffset, p, cp, ip, icp, rp, rcp, qp,
-                  qcp, bp, bcp, miniplayerbottomnavheight, bottomOffset, navBarHeight) {
-                final height = lerpDouble(_minHeight, _maxHeight, cp)!;
-                final borderRadius = BorderRadius.vertical(
-                  top: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
-                  bottom: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
-                );
-                var padding = lerpDouble(10.0, 0.0, cp)!;
+    if (controller.currentMediaItem.value == null) return const SizedBox();
+    
+    return MiniplayerRaw(
+      builder: (maxOffset, bounceUp, bounceDown, topInset, bottomInset,
+          rightInset, screenSize, sMaxOffset, p, cp, ip, icp, rp, rcp, qp,
+          qcp, bp, bcp, miniplayerbottomnavheight, bottomOffset, navBarHeight) {
+        final height = lerpDouble(_minHeight, _maxHeight, cp)!;
+        final borderRadius = BorderRadius.vertical(
+          top: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
+          bottom: Radius.circular(lerpDouble(18.0, 0.0, cp)!),
+        );
+        var padding = lerpDouble(10.0, 0.0, cp)!;
 
-                return SizedBox.expand(
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: bottomOffset,
-                        child: SafeArea(
-                          top: false,
-                          child: Container(
-                            margin: EdgeInsets.all(padding),
-                            height: height,
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              color: Colors.blueGrey[900],
-                              borderRadius: borderRadius,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.2 + 0.1 * cp),
-                                  blurRadius: 20,
-                                  spreadRadius: 2,
-                                ),
-                              ],
-                            ),
-                            child: Stack(
-                              children: [
-                                FadeIgnoreTransition(
-                                  opacity: inverseOpacityAnimation,
-                                  child: _buildMiniPlayer(controller.currentMediaItem.value!),
-                                ),
-                                FadeIgnoreTransition(
-                                  opacity: opacityAnimation,
-                                  child: _buildExpandedPlayer(
-                                    borderRadius: borderRadius,
-                                    mediaItem: controller.currentMediaItem.value!,
-                                  ),
-                                ),
-                                Positioned(
-                                  top: 12,
-                                  right: 12,
-                                  child: FadeIgnoreTransition(
-                                    opacity: opacityAnimation,
-                                    child: IconButton(
-                                      icon: const Icon(Icons.close, color: Colors.white),
-                                      onPressed: () => _controller.reverse(),
-                                    ),
-                                  ),
-                                ),
-                              ],
+        return SizedBox.expand(
+          child: Stack(
+            children: [
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomOffset,
+                child: SafeArea(
+                  top: false,
+                  child: Container(
+                    margin: EdgeInsets.all(padding),
+                    height: height,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: _colorScheme.surfaceContainerHigh,
+                      borderRadius: borderRadius,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2 + 0.1 * cp),
+                          blurRadius: 20,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      children: [
+                        FadeIgnoreTransition(
+                          opacity: inverseOpacityAnimation,
+                          child: _buildMiniPlayer(controller.currentMediaItem.value!),
+                        ),
+                        FadeIgnoreTransition(
+                          opacity: opacityAnimation,
+                          child: _buildExpandedPlayer(
+                            borderRadius: borderRadius,
+                            mediaItem: controller.currentMediaItem.value!,
+                          ),
+                        ),
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: FadeIgnoreTransition(
+                            opacity: opacityAnimation,
+                            child: IconButton(
+                              icon: Icon(Icons.close, color: _colorScheme.onSurface),
+                              onPressed: () => _controller.reverse(),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              },
-            );
-          
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildMiniPlayer(MediaItem mediaItem) {
     return GestureDetector(
       onTap: () => _controller.forward(),
-      child: Row(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            margin: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              borderRadius: BorderRadius.circular(8),
-              image: _buildArtworkDecoration(mediaItem),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                image: _buildArtworkDecoration(mediaItem),
+                color: _colorScheme.surfaceContainerHighest,
+              ),
+              child: _shouldShowFallbackIcon(mediaItem)
+                  ? Icon(Icons.music_note, color: _colorScheme.onSurface)
+                  : null,
             ),
-            child: _shouldShowFallbackIcon(mediaItem)
-                ? const Icon(Icons.music_note, color: Colors.white)
-                : null,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  mediaItem.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w500,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    mediaItem.title,
+                    style: TextStyle(
+                      color: _colorScheme.onSurface,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  mediaItem.artist ?? 'Unknown Artist',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  Text(
+                    mediaItem.artist ?? 'Unknown Artist',
+                    style: TextStyle(
+                      color: _colorScheme.onSurface.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          // IconButton(
-          //   icon: Icon(
-          //     isPlaying ? Icons.pause : Icons.play_arrow,
-          //     color: Colors.white,
-          //   ),
-          //   onPressed: () {
-          //   },
-          // ),
-        ],
+            Obx(() => IconButton(
+              icon: Icon(
+                controller.isPlaying.value ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: _colorScheme.primary,
+                size: 28,
+              ),
+              onPressed: controller.playPause,
+            )),
+          ],
+        ),
       ),
     );
   }
@@ -226,18 +233,31 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
     return Column(
       children: [
         Expanded(
-          child: Container(
-            margin: const EdgeInsets.all(30),
-            decoration: BoxDecoration(
-              color: Colors.blue,
-              borderRadius: BorderRadius.circular(16),
-              image: _buildArtworkDecoration(mediaItem),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+                image: _buildArtworkDecoration(mediaItem),
+                color: _colorScheme.surfaceContainerHighest,
+              ),
+              child: _shouldShowFallbackIcon(mediaItem)
+                  ? Center(
+                      child: Icon(
+                        Icons.music_note,
+                        color: _colorScheme.onSurface,
+                        size: 64,
+                      ),
+                    )
+                  : null,
             ),
-            child: _shouldShowFallbackIcon(mediaItem)
-                ? const Center(
-                    child: Icon(Icons.music_note, color: Colors.white, size: 64),
-                  )
-                : null,
           ),
         ),
         SafeArea(
@@ -249,14 +269,12 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (controller.currentMediaItem.value != null)
-                    _buildNowPlaying(controller.currentMediaItem.value!),
-                  
-                    _buildProgressBar(),
-                    
-                    _buildControls(),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (controller.currentMediaItem.value != null)
+                        _buildNowPlaying(controller.currentMediaItem.value!),
+                      _buildProgressBar(),
+                      _buildControls(),
                     ],
                   )
                 ],
@@ -309,31 +327,43 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
     }
   }
 
-  
-
   Widget _buildNowPlaying(MediaItem mediaItem) {
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Column(
         children: [
-          SizedBox(height: 16),
           Text(
             mediaItem.title, 
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: _colorScheme.onSurface,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 8),
           Text(
             mediaItem.artist ?? 'Unknown Artist',
-            style: TextStyle(fontSize: 18),
+            style: TextStyle(
+              fontSize: 16,
+              color: _colorScheme.onSurface.withOpacity(0.8),
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
           ),
+          const SizedBox(height: 4),
           Text(
             mediaItem.album ?? 'Unknown Album',
-            style: TextStyle(fontSize: 16),
+            style: TextStyle(
+              fontSize: 14,
+              color: _colorScheme.onSurface.withOpacity(0.6),
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -342,22 +372,32 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
 
   Widget _buildProgressBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 24),
       child: Column(
         children: [
           Obx(() {
             final position = controller.position.value;
             final duration = controller.duration.value;
-            return Slider(
-              min: 0,
-              max: duration.inMilliseconds.toDouble(),
-              value: min(position.inMilliseconds.toDouble(), duration.inMilliseconds.toDouble()),
-              onChanged: (value) {
-                controller.position.value = Duration(milliseconds: value.toInt());
-              },
-              onChangeEnd: (value) {
-                controller.seek(Duration(milliseconds: value.toInt()));
-              },
+            return SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                activeTrackColor: _colorScheme.primary,
+                inactiveTrackColor: _colorScheme.onSurface.withOpacity(0.1),
+                thumbColor: _colorScheme.primary,
+              ),
+              child: Slider(
+                min: 0,
+                max: duration.inMilliseconds.toDouble(),
+                value: min(position.inMilliseconds.toDouble(), duration.inMilliseconds.toDouble()),
+                onChanged: (value) {
+                  controller.position.value = Duration(milliseconds: value.toInt());
+                },
+                onChangeEnd: (value) {
+                  controller.seek(Duration(milliseconds: value.toInt()));
+                },
+              ),
             );
           }),
           Padding(
@@ -368,8 +408,20 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
               return Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(_formatDuration(position)),
-                  Text(_formatDuration(duration)),
+                  Text(
+                    _formatDuration(position),
+                    style: TextStyle(
+                      color: _colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    _formatDuration(duration),
+                    style: TextStyle(
+                      color: _colorScheme.onSurface.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
                 ],
               );
             }),
@@ -431,9 +483,6 @@ class _DraggableMiniPlayerState extends State<DraggableMiniPlayer>
       ),
     );
   }
-
-
-
 
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');

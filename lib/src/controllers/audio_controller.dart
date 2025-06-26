@@ -1,79 +1,79 @@
 import 'dart:io';
+
+import 'package:audio_service/audio_service.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:on_audio_query/on_audio_query.dart';
-import 'package:audio_service/audio_service.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:rhythm/src/audio_services/audio_handler.dart';
 
-class AudioController extends GetxController {
-  final OnAudioQuery _audioQuery = OnAudioQuery();
+class AudioPlayerController extends GetxController {
+  final OnAudioQuery audioQuery = OnAudioQuery();
   final RxList<SongModel> songs = <SongModel>[].obs;
   final RxList<AlbumModel> albums = <AlbumModel>[].obs;
   final RxList<ArtistModel> artists = <ArtistModel>[].obs;
-  final RxBool isLoading = false.obs;
-  
-  MyAudioHandler get audioHandler => Get.find<MyAudioHandler>();
+  final RxList<MediaItem> mediaItems = <MediaItem>[].obs;
+  final Rxn<MediaItem> currentMediaItem = Rxn<MediaItem>();
+  final Rx<Duration> position = Duration.zero.obs;
+  final Rx<Duration> duration = Duration.zero.obs;
+  final RxBool isPlaying = false.obs;
+  final RxBool isLoading = true.obs;
+  final RxBool isShuffleEnabled = false.obs;
+  final Rx<LoopMode> loopMode = LoopMode.off.obs;
+  final RxInt currentTabIndex = 0.obs; // 0: Songs, 1: Albums, 2: Artists
+  final RxBool showAlbumSongs = false.obs;
+  final RxBool showArtistSongs = false.obs;
+  final RxList<MediaItem> currentAlbumSongs = <MediaItem>[].obs;
+  final RxList<MediaItem> currentArtistSongs = <MediaItem>[].obs;
+  final Rxn<AlbumModel> currentAlbum = Rxn<AlbumModel>();
+  final Rxn<ArtistModel> currentArtist = Rxn<ArtistModel>();
+
+  AudioHandler get audioHandler => Get.find<AudioHandler>();
 
   @override
   void onInit() {
     super.onInit();
-    initAudioData();
+    fetchMedia();
+    _setupAudioHandlerListeners();
   }
 
-  Future<void> initAudioData() async {
-    await _requestPermissions();
-    await fetchAllData();
-  }
-
-  Future<void> _requestPermissions() async {
-    final storage = await Permission.storage.request();
-    final audio = await Permission.audio.request();
-
-    if (!storage.isGranted || !audio.isGranted) {
-      throw 'Required permissions not granted';
-    }
-  }
-
-  Future<void> fetchAllData() async {
-    isLoading.value = true;
+  Future<void> fetchMedia() async {
     try {
-      await Future.wait([
-        fetchSongs(),
-        fetchAlbums(),
-        fetchArtists(),
+      isLoading.value = true;
+      
+      // Fetch all data in parallel
+      final results = await Future.wait([
+        audioQuery.querySongs(
+          sortType: SongSortType.DISPLAY_NAME,
+          orderType: OrderType.ASC_OR_SMALLER,
+          uriType: UriType.EXTERNAL,
+          ignoreCase: true,
+        ),
+        audioQuery.queryAlbums(),
+        audioQuery.queryArtists(),
       ]);
+      
+      // Process results
+      final fetchedSongs = results[0] as List<SongModel>;
+      songs.assignAll(fetchedSongs.where((song) => song.duration != null && song.duration! > 0));
+      
+      albums.assignAll(results[1] as List<AlbumModel>);
+      artists.assignAll(results[2] as List<ArtistModel>);
+      
+      await _convertSongsToMediaItems();
     } finally {
       isLoading.value = false;
     }
   }
 
-  Future<void> fetchSongs() async {
-    final fetchedSongs = await _audioQuery.querySongs(
-      sortType: SongSortType.DISPLAY_NAME,
-      orderType: OrderType.ASC_OR_SMALLER,
-      uriType: UriType.EXTERNAL,
-      ignoreCase: true,
-    );
-    songs.assignAll(fetchedSongs.where((song) => song.duration != null && song.duration! > 0));
+  Future<void> _convertSongsToMediaItems() async {
+    mediaItems.assignAll(await Future.wait(songs.map((song) => _songToMediaItem(song))));
   }
 
-  Future<void> fetchAlbums() async {
-    final fetchedAlbums = await _audioQuery.queryAlbums();
-    albums.assignAll(fetchedAlbums);
-  }
-
-  Future<void> fetchArtists() async {
-    final fetchedArtists = await _audioQuery.queryArtists();
-    artists.assignAll(fetchedArtists);
-  }
-
-  Future<MediaItem> songToMediaItem(SongModel song) async {
+  Future<MediaItem> _songToMediaItem(SongModel song) async {
     Uri? artUri;
-
     try {
-      final artBytes = await _audioQuery.queryArtwork(song.id, ArtworkType.AUDIO);
+      final artBytes = await audioQuery.queryArtwork(song.id, ArtworkType.AUDIO);
       if (artBytes != null) {
         final tempDir = await getTemporaryDirectory();
         final artPath = '${tempDir.path}/${song.id}_art.jpg';
@@ -89,114 +89,147 @@ class AudioController extends GetxController {
       artist: song.artist ?? 'Unknown Artist',
       album: song.album ?? 'Unknown Album',
       duration: Duration(milliseconds: song.duration ?? 0),
-      // Use content URI directly for playback
-      extras: {
-        'uri': song.uri ?? song.data, // Use the content URI
-        'song_id': song.id,
-        'album_id': song.albumId,
-        'artist_id': song.artistId,
-        'artUri': artUri?.toString(), // Store artwork URI as string
-      },
+      artUri: artUri,
+      extras: {'uri': song.uri ?? song.data},
     );
   }
 
-  Future<List<MediaItem>> songsToMediaItems(List<SongModel> songs) async {
-    return await Future.wait(songs.map((song) => songToMediaItem(song)));
-  }
-
-  Future<void> playSong(SongModel song) async {
-    final index = songs.indexWhere((s) => s.id == song.id);
-    if (index != -1) {
-      await audioHandler.setQueue(songs, startIndex: index);
-      await audioHandler.play();
-    }
-  }
-
-  Future<void> playSongAtIndex(int index) async {
-    if (index >= 0 && index < songs.length) {
-      await audioHandler.setQueue(songs, startIndex: index);
-      await audioHandler.play();
-    }
-  }
-
-  Future<void> playAlbum(AlbumModel album) async {
+  Future<void> loadAlbumSongs(AlbumModel album) async {
+    isLoading.value = true;
     try {
-      final albumSongs = songs.where((song) => song.albumId == album.id).toList();
-      
-      if (albumSongs.isEmpty) {
-        throw Exception('No songs found in album');
-      }
-
-      await audioHandler.setQueue(albumSongs);
-      await audioHandler.play();
-      
-      Get.snackbar('Playing', 'Album: ${album.album}');
-    } catch (e) {
-      print('Error playing album: $e');
-      Get.snackbar('Error', 'Could not play album: ${album.album}');
+      currentAlbum.value = album;
+      final albumSongs = await audioQuery.queryAudiosFrom(
+        AudiosFromType.ALBUM_ID,
+        album.id,
+      );
+      currentAlbumSongs.assignAll(
+        await Future.wait(
+          albumSongs.where((song) => song.duration != null && song.duration! > 0)
+            .map((song) => _songToMediaItem(song))
+        )
+      );
+      showAlbumSongs.value = true;
+    } finally {
+      isLoading.value = false;
     }
   }
 
-  Future<void> playArtist(ArtistModel artist) async {
+  Future<void> loadArtistSongs(ArtistModel artist) async {
+    isLoading.value = true;
     try {
-      final artistSongs = songs.where((song) => song.artistId == artist.id).toList();
-      
-      if (artistSongs.isEmpty) {
-        throw Exception('No songs found by artist');
-      }
-
-      await audioHandler.setQueue(artistSongs);
-      await audioHandler.play();
-      
-      Get.snackbar('Playing', 'Artist: ${artist.artist}');
-    } catch (e) {
-      print('Error playing artist: $e');
-      Get.snackbar('Error', 'Could not play artist: ${artist.artist}');
+      currentArtist.value = artist;
+      final artistSongs = await audioQuery.queryAudiosFrom(
+        AudiosFromType.ARTIST_ID,
+        artist.id,
+      );
+      currentArtistSongs.assignAll(
+        await Future.wait(
+          artistSongs.where((song) => song.duration != null && song.duration! > 0)
+            .map((song) => _songToMediaItem(song))
+        )
+      );
+      showArtistSongs.value = true;
+    } finally {
+      isLoading.value = false;
     }
   }
 
-  Future<void> playPlaylist(List<SongModel> playlist) async {
-    await audioHandler.setQueue(playlist);
-    await audioHandler.play();
+  void _setupAudioHandlerListeners() {
+    final handler = audioHandler as AudioPlayerHandler;
+    
+    handler.mediaItem.listen((mediaItem) {
+      currentMediaItem.value = mediaItem;
+    });
+
+    handler.playbackState.listen((state) {
+      isPlaying.value = state.playing;
+    });
+
+    handler.positionDataStream.listen((positionData) {
+      position.value = positionData.position;
+      duration.value = positionData.duration;
+    });
+
+    isShuffleEnabled.listen((enabled) {
+      if (enabled != handler.isShuffleEnabled) {
+        handler.toggleShuffle();
+      }
+    });
+
+    loopMode.listen((mode) {
+      if (mode != handler.loopMode) {
+        handler.toggleRepeat();
+      }
+    });
   }
 
-  // Loop control methods
-  Future<void> setLoopMode(LoopMode mode) async {
-    await audioHandler.setLoopMode(mode);
+  void playSong(int index) {
+    final handler = audioHandler as AudioPlayerHandler;
+    handler.updateQueue(mediaItems, initialIndex: index);
   }
 
-  Future<void> toggleLoopMode() async {
-    final current = audioHandler.currentLoopMode;
-    final next = switch(current) {
-      LoopMode.off => LoopMode.all,
-      LoopMode.all => LoopMode.one,
-      LoopMode.one => LoopMode.off,
-    };
-    await setLoopMode(next);
+  void playAlbum(int index) {
+    final handler = audioHandler as AudioPlayerHandler;
+    handler.updateQueue(currentAlbumSongs, initialIndex: index);
   }
 
-  // Shuffle control methods
-  Future<void> toggleShuffle() async {
-    await audioHandler.toggleShuffle();
+  void playArtist(int index) {
+    final handler = audioHandler as AudioPlayerHandler;
+    handler.updateQueue(currentArtistSongs, initialIndex: index);
   }
 
-  // Add these getters
-  LoopMode get currentLoopMode => audioHandler.currentLoopMode;
-  bool get isShuffleEnabled => audioHandler.isShuffleEnabled;
+  void playPause() {
+    if (isPlaying.value) {
+      audioHandler.pause();
+    } else {
+      audioHandler.play();
+    }
+  }
 
-  // Control methods that delegate to audio handler
-  Future<void> pause() => audioHandler.pause();
-  Future<void> resume() => audioHandler.play();
-  Future<void> skipToNext() => audioHandler.skipToNext();
-  Future<void> skipToPrevious() => audioHandler.skipToPrevious();
-  Future<void> seek(Duration position) => audioHandler.seek(position);
-  Future<void> stop() => audioHandler.stop();
+  void stopPlaying(){
+    audioHandler.pause();
+  }
 
-  // Getters for current state
-  RxList<SongModel> get currentQueue => audioHandler.internalQueue;
-  RxInt get currentIndex => audioHandler.currentIndex;
-  RxBool get isPlaying => audioHandler.isPlaying;
-  Stream<Duration> get positionStream => audioHandler.positionStream;
-  Stream<Duration?> get durationStream => audioHandler.durationStream;
-  Stream<MediaItem?> get currentMediaItem => audioHandler.mediaItem;
+  void seek(Duration position) {
+    audioHandler.seek(position);
+  }
+
+  void skipToNext() {
+    audioHandler.skipToNext();
+  }
+
+  void skipToPrevious() {
+    audioHandler.skipToPrevious();
+  }
+
+  void toggleShuffle() {
+    isShuffleEnabled.toggle();
+  }
+
+  void toggleRepeat() {
+    loopMode.value = loopMode.value.next;
+  }
+
+  void backToAlbums() {
+    showAlbumSongs.value = false;
+    currentAlbum.value = null;
+  }
+
+  void backToArtists() {
+    showArtistSongs.value = false;
+    currentArtist.value = null;
+  }
+}
+
+extension on LoopMode {
+  LoopMode get next {
+    switch (this) {
+      case LoopMode.off:
+        return LoopMode.one;
+      case LoopMode.one:
+        return LoopMode.all;
+      case LoopMode.all:
+        return LoopMode.off;
+    }
+  }
 }
