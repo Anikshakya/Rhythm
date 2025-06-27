@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:rhythm/src/audio_services/audio_handler.dart';
 import 'package:rhythm/src/components/miniplayer/mini_player.dart';
-import 'package:rhythm/src/controllers/audio_controller.dart';
-import 'package:rhythm/src/view/home_screen.dart';
+import 'package:rhythm/src/services/permisson_service.dart';
+import 'package:rhythm/src/view/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,55 +27,72 @@ void main() async {
   runApp(MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    initialize();
+    super.initState();
+  }
+
+  initialize() async{
+    await PermissionService().checkAndRequestPermissions();
+  }
+
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'Audio Player',
+      title: 'Rhythm',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: AudioPlayerPage(),
+      home: SplashScreen(),
       builder: (context, child) {
         return FullScreenBuilder(child: child!);
       },
     );
   }
 }
+
+
 class FullScreenBuilder extends StatefulWidget {
   final Widget child;
   const FullScreenBuilder({super.key, required this.child});
  
   @override
-  State<FullScreenBuilder> createState() =>
-      _FullScreenBuilderState();
+  State<FullScreenBuilder> createState() => _FullScreenBuilderState();
 }
- 
+
 class _FullScreenBuilderState extends State<FullScreenBuilder> {
-  final AudioPlayerController controller = Get.put(AudioPlayerController());
+  bool _hasPermission = false;
+
   @override
   void initState() {
     super.initState();
+    _checkPermission();
   }
- 
+
+  Future<void> _checkPermission() async {
+    final granted = await PermissionService().checkPermissionStatus(context, Permission.audio); // or Permission.media, etc.
+    if (mounted) setState(() => _hasPermission = granted);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
-      child: Obx(()=>
-        Stack(
+      child: Stack(
           children: [
             widget.child,
-            if(controller.currentMediaItem.value != null)
-            Positioned.fill(
-              child: DraggableMiniPlayer()
-            ),
+            if (_hasPermission)
+              const DraggableMiniPlayer(),
           ],
         ),
-      ),
     );
   }
 }
-
-
-
