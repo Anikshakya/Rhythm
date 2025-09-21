@@ -769,7 +769,13 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
                   controller: searchCtrl,
                   placeholder: "Search YouTube Music",
                   style: CupertinoTheme.of(context).textTheme.textStyle,
-                  onChanged: (v) => youtubeCon.search(v),
+                  
+                  onSubmitted: (value) async{
+                    await youtubeCon.search(value);
+                    setState(() {
+                      
+                    });
+                  },
                   prefixInsets: EdgeInsetsDirectional.fromSTEB(6, 0, 0, 0),
                   borderRadius: BorderRadius.circular(10),
                   backgroundColor: CupertinoColors.systemGrey6.resolveFrom(
@@ -779,85 +785,141 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
               ),
             ),
             Obx(() {
-  final isSearching = searchCtrl.text.isNotEmpty;
-  final list = isSearching ? youtubeCon.searchResults : youtubeCon.trendingSongs;
-
-  if (youtubeCon.isInitialLoading.value) {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Center(child: CupertinoActivityIndicator(radius: 16)),
-      ),
-    );
-  }
-
-  if (list.isEmpty) {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          isSearching
-              ? 'No search results found for "${searchCtrl.text}".'
-              : 'No trending songs found. Pull to refresh.',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 16,
-            color: CupertinoColors.secondaryLabel.resolveFrom(context),
-          ),
-        ),
-      ),
-    );
-  }
-
-  return SliverList(
-    delegate: SliverChildBuilderDelegate(
-      (context, i) {
-        final s = list[i];
-        final isPlaying = musicCon.currentIndex.value == i &&
-            musicCon.songs.isNotEmpty &&
-            musicCon.songs.contains(s);
-
-        return CupertinoListTile(
-          leading: s.cover != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    s.cover!,
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        Icon(CupertinoIcons.music_note_2, size: 30),
+              final list =
+                  searchCtrl.text.isEmpty
+                      ? youtubeCon.trendingSongs
+                      : youtubeCon.searchResults;
+              if (youtubeCon.isInitialLoading.value) {
+                return SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Center(
+                      child: CupertinoActivityIndicator(radius: 16),
+                    ),
                   ),
-                )
-              : Icon(CupertinoIcons.music_note_2, size: 30),
-          title: Text(
-            s.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: CupertinoTheme.of(context).textTheme.textStyle,
-          ),
-          subtitle: Text(
-            s.artist,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 14, color: CupertinoColors.secondaryLabel),
-          ),
-          trailing: isPlaying
-              ? Icon(CupertinoIcons.waveform,
-                  color: CupertinoTheme.of(context).primaryColor, size: 24)
-              : null,
-          onTap: () {
-            musicCon.songs.assignAll(list);
-            musicCon.playIndex(i);
-          },
-        );
-      },
-      childCount: list.length + (youtubeCon.isLoadingMore.value ? 1 : 0),
-    ),
-  );
-}),
+                );
+              }
+              if (list.isEmpty) {
+                return SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      searchCtrl.text.isEmpty
+                          ? "No trending songs found. Pull to refresh."
+                          : "No search results found for \"${searchCtrl.text}\".",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: CupertinoColors.secondaryLabel.resolveFrom(
+                          context,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }
+              return SliverList(
+                delegate: SliverChildListDelegate([
+                  CupertinoListSection.insetGrouped(
+                    header: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        searchCtrl.text.isEmpty
+                            ? "Trending Now"
+                            : "Search Results",
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: CupertinoColors.label.resolveFrom(context),
+                        ),
+                      ),
+                    ),
+                    children:
+                        list.asMap().entries.map((entry) {
+                          final i = entry.key;
+                          final s = entry.value;
+                          final isPlaying =
+                              musicCon.currentIndex.value == i &&
+                              musicCon.songs.isNotEmpty &&
+                              musicCon.songs.contains(s);
 
+                          return CupertinoListTile(
+                            leading:
+                                s.cover != null
+                                    ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        s.cover!,
+                                        width: 50,
+                                        height: 50,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) =>
+                                                Icon(
+                                                  CupertinoIcons.music_note_2,
+                                                  size: 30,
+                                                  color: CupertinoColors
+                                                      .secondaryLabel
+                                                      .resolveFrom(context),
+                                                ),
+                                      ),
+                                    )
+                                    : Icon(
+                                      CupertinoIcons.music_note_2,
+                                      size: 30,
+                                      color: CupertinoColors.secondaryLabel
+                                          .resolveFrom(context),
+                                    ),
+                            title: Text(
+                              s.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  CupertinoTheme.of(
+                                    context,
+                                  ).textTheme.textStyle,
+                            ),
+                            subtitle: Text(
+                              s.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: CupertinoColors.secondaryLabel
+                                    .resolveFrom(context),
+                              ),
+                            ),
+                            trailing:
+                                isPlaying
+                                    ? Icon(
+                                      CupertinoIcons.waveform,
+                                      color:
+                                          CupertinoTheme.of(
+                                            context,
+                                          ).primaryColor,
+                                      size: 24,
+                                    )
+                                    : null,
+                            onTap: () {
+                              musicCon.songs.assignAll(list);
+                              musicCon.playIndex(i);
+                            },
+                          );
+                        }).toList(),
+                  ),
+                  if (youtubeCon.isLoadingMore.value)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: CupertinoActivityIndicator(radius: 16),
+                      ),
+                    ),
+                ]),
+              );
+            }),
             SliverPadding(
               padding: EdgeInsets.only(bottom: bottomPadding),
               sliver: CupertinoSliverRefreshControl(
