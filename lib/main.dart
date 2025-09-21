@@ -14,7 +14,6 @@ import 'package:rhythm/miniplayer/miniplayer.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:rxdart/rxdart.dart' as rx;
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final audioHandler = await AudioService.init(
@@ -47,12 +46,12 @@ class Song {
   });
 
   MediaItem toMediaItem() => MediaItem(
-        id: url,
-        title: title,
-        artist: artist,
-        artUri: cover != null ? Uri.parse(cover!) : null,
-        extras: {'uri': url, 'videoId': videoId},
-      );
+    id: url,
+    title: title,
+    artist: artist,
+    artUri: cover != null ? Uri.parse(cover!) : null,
+    extras: {'uri': url, 'videoId': videoId},
+  );
 }
 
 /// ---------------- Music Controller ----------------
@@ -85,16 +84,19 @@ class MusicController extends GetxController {
 
   void _listenToAudioHandler() {
     audioHandler.playbackState.listen((state) {
-      print("Playback state: ${state.processingState}, playing: ${state.playing}");
+      print(
+        "Playback state: ${state.processingState}, playing: ${state.playing}",
+      );
       isPlaying.value = state.playing;
       isPlayingVN.value = state.playing;
-      isLoading.value = state.processingState == AudioProcessingState.loading ||
+      isLoading.value =
+          state.processingState == AudioProcessingState.loading ||
           state.processingState == AudioProcessingState.buffering;
     });
 
     audioHandler.positionDataStream.listen((data) {
-      position.value = data.position;
-      duration.value = data.duration;
+      position.value = data.position ?? Duration.zero;
+      duration.value = data.duration ?? Duration.zero;
     });
 
     audioHandler.mediaItem.listen((mediaItem) {
@@ -102,7 +104,9 @@ class MusicController extends GetxController {
         final index = songs.indexWhere((song) => song.url == mediaItem.id);
         if (index != -1) {
           currentIndex.value = index;
-          print("Current media item: ${mediaItem.title}, index: ${currentIndex.value}");
+          print(
+            "Current media item: ${mediaItem.title}, index: ${currentIndex.value}",
+          );
         }
       }
     });
@@ -133,17 +137,18 @@ class MusicController extends GetxController {
       print("No files picked");
       return;
     }
-    final picked = result.files
-        .where((f) => f.path != null && File(f.path!).existsSync())
-        .map((f) {
-          print("Picked file: ${f.path}");
-          return Song(
-            title: f.name.split('.').first,
-            artist: 'Unknown',
-            url: f.path!,
-          );
-        })
-        .toList();
+    final picked =
+        result.files
+            .where((f) => f.path != null && File(f.path!).existsSync())
+            .map((f) {
+              print("Picked file: ${f.path}");
+              return Song(
+                title: f.name.split('.').first,
+                artist: 'Unknown',
+                url: f.path!,
+              );
+            })
+            .toList();
     if (picked.isNotEmpty) {
       songs.assignAll(picked);
       await _setPlaylist();
@@ -183,7 +188,10 @@ class MusicController extends GetxController {
     } catch (e, st) {
       print("Play error: $e\n$st");
       if (requestId == _playRequestId) {
-        Get.snackbar('Error', 'Failed to play song: ${songs[actualIndex].title}');
+        Get.snackbar(
+          'Error',
+          'Failed to play song: ${songs[actualIndex].title}',
+        );
       }
     } finally {
       if (requestId == _playRequestId) {
@@ -282,7 +290,10 @@ class MusicController extends GetxController {
           return;
         }
 
-        prevIndex = shuffledOrder[(current - 1) < 0 ? shuffledOrder.length - 1 : current - 1];
+        prevIndex =
+            shuffledOrder[(current - 1) < 0
+                ? shuffledOrder.length - 1
+                : current - 1];
       } else {
         final isFirst = currentIndex.value == 0;
 
@@ -291,7 +302,10 @@ class MusicController extends GetxController {
           return;
         }
 
-        prevIndex = (currentIndex.value - 1) < 0 ? songs.length - 1 : currentIndex.value - 1;
+        prevIndex =
+            (currentIndex.value - 1) < 0
+                ? songs.length - 1
+                : currentIndex.value - 1;
       }
 
       await playIndex(prevIndex);
@@ -348,7 +362,9 @@ class MusicController extends GetxController {
 
   int getPrevShuffledIndex() {
     final current = shuffledOrder.indexOf(currentIndex.value);
-    return shuffledOrder[(current - 1) < 0 ? shuffledOrder.length - 1 : current - 1];
+    return shuffledOrder[(current - 1) < 0
+        ? shuffledOrder.length - 1
+        : current - 1];
   }
 
   void seekTo(Duration pos) => audioHandler.seek(pos);
@@ -397,9 +413,10 @@ class YouTubeController extends GetxController {
   final YoutubeExplode yt = YoutubeExplode();
   final RxList<Song> trendingSongs = <Song>[].obs;
   final RxList<Song> searchResults = <Song>[].obs;
-  String? _trendingPageToken;
-  String? _searchPageToken;
   final RxBool isLoadingMore = false.obs;
+  final RxBool isInitialLoading = true.obs;
+  Stream<Video>? _trendingStream;
+  String? _lastSearchQuery;
 
   @override
   void onInit() {
@@ -407,85 +424,93 @@ class YouTubeController extends GetxController {
     fetchTrending();
   }
 
-  int _trendingOffset = 0; // keeps track of how many songs have been loadedi
-  int _searchoffset = 0; // keeps track of how many songs have been loadedi
+  Future<void> fetchTrending({bool loadMore = false}) async {
+    try {
+      isLoadingMore.value = loadMore;
+      if (!loadMore) {
+        isInitialLoading.value = true;
+        trendingSongs.clear();
+      }
 
-Future<void> fetchTrending({bool loadMore = false}) async {
-  try {
-    isLoadingMore.value = loadMore;
+      // Fetch videos (returns a VideoSearchList)
+      final searchResults = await yt.search.getVideos('trending music');
 
-    // Increment offset if loading more
-    if (loadMore) {
-      _trendingOffset += 20;
-    } else {
-      _trendingOffset = 0;
+      // Take first 20 results
+      final songs =
+          searchResults.take(20).map((video) {
+            print("Trending song: ${video.title}, URL: ${video.url}");
+            return Song(
+              title: video.title,
+              artist: video.author,
+              url: video.url,
+              cover: video.thumbnails.mediumResUrl,
+              videoId: video.id.value,
+            );
+          }).toList();
+
+      if (loadMore) {
+        trendingSongs.addAll(songs);
+      } else {
+        trendingSongs.assignAll(songs);
+      }
+
+      if (songs.isEmpty && !loadMore) {
+        Get.snackbar(
+          'No Results',
+          'No trending songs found. Please try again later.',
+        );
+      }
+    } catch (e) {
+      print("YouTube trending error: $e");
+      Get.snackbar('Error', 'Failed to fetch trending songs: $e');
+    } finally {
+      isLoadingMore.value = false;
+      isInitialLoading.value = false;
     }
-
-    final searchResults = await yt.search.search(
-      'trending music',
-    );
-
-    // Take the next 20 items based on offset
-    final songs = searchResults
-        .skip(_trendingOffset)
-        .take(_trendingOffset)
-        .map((video) {
-          print("Trending song: ${video.title}, URL: ${video.url}");
-          return Song(
-            title: video.title,
-            artist: video.author,
-            url: video.url,
-            cover: video.thumbnails.mediumResUrl,
-            videoId: video.id.value,
-          );
-        })
-        .toList();
-
-    if (loadMore) {
-      trendingSongs.addAll(songs);
-    } else {
-      trendingSongs.assignAll(songs);
-    }
-  } catch (e) {
-    print("YouTube trending error: $e");
-    Get.snackbar('Error', 'Failed to fetch trending songs');
-  } finally {
-    isLoadingMore.value = false;
   }
-}
 
 
   Future<void> search(String query, {bool loadMore = false}) async {
     if (query.isEmpty) {
       searchResults.clear();
-      _searchPageToken = null;
+      _lastSearchQuery = null;
       return;
     }
+
     try {
-      if (loadMore && _searchPageToken == null) return;
       isLoadingMore.value = loadMore;
-      final results = await yt.search.search(
-        '$query music',
-      );
-      final songs = results.take(20).map((video) {
+      if (!loadMore) {
+        searchResults.clear();
+        _lastSearchQuery = query;
+      }
+
+      final stream = await yt.search.getVideos('$query music');
+      final songs = <Song>[];
+      for (final video in stream.take(20)) {
         print("Search result: ${video.title}, URL: ${video.url}");
-        return Song(
-          title: video.title,
-          artist: video.author,
-          url: video.url,
-          cover: video.thumbnails.mediumResUrl,
-          videoId: video.id.value,
+        songs.add(
+          Song(
+            title: video.title,
+            artist: video.author,
+            url: video.url,
+            cover: video.thumbnails.mediumResUrl,
+            videoId: video.id.value,
+          ),
         );
-      }).toList();
+      }
+
       if (loadMore) {
         searchResults.addAll(songs);
       } else {
         searchResults.assignAll(songs);
       }
-      // Pagination not supported: nextPageToken is not available in VideoSearchList.
+
+      if (songs.isEmpty && !loadMore) {
+        Get.snackbar('No Results', 'No songs found for "$query".');
+      }
     } catch (e) {
       print("YouTube search error: $e");
-      Get.snackbar('Error', 'Failed to search songs');
+      Get.snackbar('Error', 'Failed to search songs: $e');
     } finally {
       isLoadingMore.value = false;
     }
@@ -501,7 +526,9 @@ Future<void> fetchTrending({bool loadMore = false}) async {
 /// ---------------- Global Vars ----------------
 const double playerMinHeight = 70;
 late double playerMaxHeight;
-final ValueNotifier<double> playerExpandProgress = ValueNotifier(playerMinHeight);
+final ValueNotifier<double> playerExpandProgress = ValueNotifier(
+  playerMinHeight,
+);
 final ValueNotifier<Color> appPrimaryColor = ValueNotifier(Colors.blue);
 final ValueNotifier<bool> isPlayingVN = ValueNotifier(false);
 
@@ -525,7 +552,9 @@ class MyApp extends StatelessWidget {
             cupertinoOverrideTheme: CupertinoThemeData(
               primaryColor: color,
               scaffoldBackgroundColor: CupertinoColors.systemBackground,
-              barBackgroundColor: CupertinoColors.systemBackground.withOpacity(0.8),
+              barBackgroundColor: CupertinoColors.systemBackground.withOpacity(
+                0.8,
+              ),
               textTheme: CupertinoTextThemeData(
                 navTitleTextStyle: TextStyle(
                   fontSize: 17,
@@ -551,8 +580,11 @@ class MyApp extends StatelessWidget {
             cupertinoOverrideTheme: CupertinoThemeData(
               brightness: Brightness.dark,
               primaryColor: color,
-              scaffoldBackgroundColor: CupertinoColors.systemBackground.resolveFrom(context),
-              barBackgroundColor: CupertinoColors.systemBackground.resolveFrom(context).withOpacity(0.8),
+              scaffoldBackgroundColor: CupertinoColors.systemBackground
+                  .resolveFrom(context),
+              barBackgroundColor: CupertinoColors.systemBackground
+                  .resolveFrom(context)
+                  .withOpacity(0.8),
               textTheme: CupertinoTextThemeData(
                 navTitleTextStyle: TextStyle(
                   fontSize: 17,
@@ -597,7 +629,9 @@ class _MyHomePageState extends State<MyHomePage> {
         children: [
           Navigator(
             key: _navigatorKey,
-            onGenerateRoute: (_) => CupertinoPageRoute(builder: (_) => _pages[_selectedIndex]),
+            onGenerateRoute:
+                (_) =>
+                    CupertinoPageRoute(builder: (_) => _pages[_selectedIndex]),
           ),
           Obx(() {
             if (musicCon.songs.isEmpty || musicCon.currentIndex.value < 0) {
@@ -620,7 +654,9 @@ class _MyHomePageState extends State<MyHomePage> {
       bottomNavigationBar: ValueListenableBuilder<double>(
         valueListenable: playerExpandProgress,
         builder: (context, height, child) {
-          final value = ((height - playerMinHeight) / (playerMaxHeight - playerMinHeight)).clamp(0.0, 1.0);
+          final value = ((height - playerMinHeight) /
+                  (playerMaxHeight - playerMinHeight))
+              .clamp(0.0, 1.0);
           final translateY = kBottomNavigationBarHeight * value * 0.5;
 
           return Material(
@@ -639,8 +675,11 @@ class _MyHomePageState extends State<MyHomePage> {
                     );
                   },
                   selectedItemColor: Theme.of(context).colorScheme.primary,
-                  unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                  backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+                  unselectedItemColor:
+                      Theme.of(context).colorScheme.onSurfaceVariant,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withOpacity(0.08),
                   items: const [
                     BottomNavigationBarItem(
                       icon: Icon(CupertinoIcons.house_fill),
@@ -681,7 +720,8 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
   void initState() {
     super.initState();
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 100 &&
+      if (_scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 100 &&
           !youtubeCon.isLoadingMore.value) {
         if (searchCtrl.text.isEmpty) {
           youtubeCon.fetchTrending(loadMore: true);
@@ -701,9 +741,10 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = musicCon.songs.isNotEmpty && musicCon.currentIndex.value >= 0
-        ? playerMinHeight + kBottomNavigationBarHeight
-        : kBottomNavigationBarHeight;
+    final bottomPadding =
+        musicCon.songs.isNotEmpty && musicCon.currentIndex.value >= 0
+            ? playerMinHeight + kBottomNavigationBarHeight
+            : kBottomNavigationBarHeight;
 
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
@@ -720,7 +761,10 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
           slivers: [
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: CupertinoSearchTextField(
                   controller: searchCtrl,
                   placeholder: "Search YouTube Music",
@@ -728,115 +772,104 @@ class _YouTubeHomePageState extends State<YouTubeHomePage> {
                   onChanged: (v) => youtubeCon.search(v),
                   prefixInsets: EdgeInsetsDirectional.fromSTEB(6, 0, 0, 0),
                   borderRadius: BorderRadius.circular(10),
-                  backgroundColor: CupertinoColors.systemGrey6.resolveFrom(context),
+                  backgroundColor: CupertinoColors.systemGrey6.resolveFrom(
+                    context,
+                  ),
                 ),
               ),
             ),
             Obx(() {
-              final list = searchCtrl.text.isEmpty ? youtubeCon.trendingSongs : youtubeCon.searchResults;
-              return SliverList(
-                delegate: SliverChildListDelegate([
-                  CupertinoListSection.insetGrouped(
-                    header: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Text(
-                        searchCtrl.text.isEmpty ? "Trending Now" : "Search Results",
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: CupertinoColors.label.resolveFrom(context),
-                        ),
-                      ),
-                    ),
-                    children: list.asMap().entries.map((entry) {
-                      final i = entry.key;
-                      final s = entry.value;
-                      final isPlaying = musicCon.currentIndex.value == i &&
-                          musicCon.songs.isNotEmpty &&
-                          musicCon.songs.contains(s);
+  final isSearching = searchCtrl.text.isNotEmpty;
+  final list = isSearching ? youtubeCon.searchResults : youtubeCon.trendingSongs;
 
-                      return CupertinoListTile(
-                        leading: s.cover != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.network(
-                                  s.cover!,
-                                  width: 50,
-                                  height: 50,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) => Icon(
-                                    CupertinoIcons.music_note_2,
-                                    size: 30,
-                                    color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                                  ),
-                                ),
-                              )
-                            : Icon(
-                                CupertinoIcons.music_note_2,
-                                size: 30,
-                                color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                              ),
-                        title: Text(
-                          s.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CupertinoTheme.of(context).textTheme.textStyle,
-                        ),
-                        subtitle: Text(
-                          s.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                          ),
-                        ),
-                        trailing: isPlaying
-                            ? Icon(
-                                CupertinoIcons.waveform,
-                                color: CupertinoTheme.of(context).primaryColor,
-                                size: 24,
-                              )
-                            : null,
-                        onTap: () {
-                          musicCon.songs.assignAll(list);
-                          musicCon.playIndex(i);
-                        },
-                      );
-                    }).toList(),
+  if (youtubeCon.isInitialLoading.value) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(child: CupertinoActivityIndicator(radius: 16)),
+      ),
+    );
+  }
+
+  if (list.isEmpty) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          isSearching
+              ? 'No search results found for "${searchCtrl.text}".'
+              : 'No trending songs found. Pull to refresh.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            color: CupertinoColors.secondaryLabel.resolveFrom(context),
+          ),
+        ),
+      ),
+    );
+  }
+
+  return SliverList(
+    delegate: SliverChildBuilderDelegate(
+      (context, i) {
+        final s = list[i];
+        final isPlaying = musicCon.currentIndex.value == i &&
+            musicCon.songs.isNotEmpty &&
+            musicCon.songs.contains(s);
+
+        return CupertinoListTile(
+          leading: s.cover != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    s.cover!,
+                    width: 50,
+                    height: 50,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        Icon(CupertinoIcons.music_note_2, size: 30),
                   ),
-                  if (youtubeCon.isLoadingMore.value)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(child: CupertinoActivityIndicator(radius: 16)),
-                    ),
-                ]),
-              );
-            }),
+                )
+              : Icon(CupertinoIcons.music_note_2, size: 30),
+          title: Text(
+            s.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CupertinoTheme.of(context).textTheme.textStyle,
+          ),
+          subtitle: Text(
+            s.artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14, color: CupertinoColors.secondaryLabel),
+          ),
+          trailing: isPlaying
+              ? Icon(CupertinoIcons.waveform,
+                  color: CupertinoTheme.of(context).primaryColor, size: 24)
+              : null,
+          onTap: () {
+            musicCon.songs.assignAll(list);
+            musicCon.playIndex(i);
+          },
+        );
+      },
+      childCount: list.length + (youtubeCon.isLoadingMore.value ? 1 : 0),
+    ),
+  );
+}),
 
-            Obx(() {
-              final list =
-                  searchCtrl.text.isEmpty
-                      ? youtubeCon.trendingSongs
-                      : youtubeCon.searchResults;
-              if (list.isEmpty && !youtubeCon.isLoadingMore.value) {
-                return SliverToBoxAdapter(
-                  child: Center(child: CupertinoActivityIndicator(radius: 16)),
-                );
-              }
-              return SliverPadding(
-                padding: EdgeInsets.only(bottom: bottomPadding),
-                sliver: CupertinoSliverRefreshControl(
-                  onRefresh: () async {
-                    if (searchCtrl.text.isEmpty) {
-                      await youtubeCon.fetchTrending();
-                    } else {
-                      await youtubeCon.search(searchCtrl.text);
-                    }
-                  },
-                ),
-              );
-            }),
+            SliverPadding(
+              padding: EdgeInsets.only(bottom: bottomPadding),
+              sliver: CupertinoSliverRefreshControl(
+                onRefresh: () async {
+                  if (searchCtrl.text.isEmpty) {
+                    await youtubeCon.fetchTrending();
+                  } else {
+                    await youtubeCon.search(searchCtrl.text);
+                  }
+                },
+              ),
+            ),
           ],
         ),
       ),
@@ -891,10 +924,11 @@ class LocalSongsPage extends StatelessWidget {
                       fontSize: 16,
                     ),
                   ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    CupertinoPageRoute(builder: (_) => SecondScreen()),
-                  ),
+                  onPressed:
+                      () => Navigator.push(
+                        context,
+                        CupertinoPageRoute(builder: (_) => SecondScreen()),
+                      ),
                 ),
                 const SizedBox(height: 12),
                 CupertinoButton(
@@ -908,9 +942,11 @@ class LocalSongsPage extends StatelessWidget {
                       fontSize: 16,
                     ),
                   ),
-                  onPressed: () => Navigator.of(context, rootNavigator: true).push(
-                    CupertinoPageRoute(builder: (_) => ThirdScreen()),
-                  ),
+                  onPressed:
+                      () => Navigator.of(
+                        context,
+                        rootNavigator: true,
+                      ).push(CupertinoPageRoute(builder: (_) => ThirdScreen())),
                 ),
                 const SizedBox(height: 20),
                 Text(
@@ -928,23 +964,26 @@ class LocalSongsPage extends StatelessWidget {
                   physics: NeverScrollableScrollPhysics(),
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
-                  children: Colors.primaries.map((c) {
-                    return GestureDetector(
-                      onTap: () => appPrimaryColor.value = c,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: c,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: appPrimaryColor.value == c
-                                ? CupertinoColors.white
-                                : CupertinoColors.systemGrey4.resolveFrom(context),
-                            width: 2,
+                  children:
+                      Colors.primaries.map((c) {
+                        return GestureDetector(
+                          onTap: () => appPrimaryColor.value = c,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: c,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color:
+                                    appPrimaryColor.value == c
+                                        ? CupertinoColors.white
+                                        : CupertinoColors.systemGrey4
+                                            .resolveFrom(context),
+                                width: 2,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
+                        );
+                      }).toList(),
                 ),
                 const SizedBox(height: 20),
                 Obx(() {
@@ -956,7 +995,9 @@ class LocalSongsPage extends StatelessWidget {
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 16,
-                          color: CupertinoColors.secondaryLabel.resolveFrom(context),
+                          color: CupertinoColors.secondaryLabel.resolveFrom(
+                            context,
+                          ),
                         ),
                       ),
                     );
@@ -973,42 +1014,53 @@ class LocalSongsPage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    children: musicCon.songs.asMap().entries.map((entry) {
-                      final i = entry.key;
-                      final s = entry.value;
-                      final isPlaying = musicCon.currentIndex.value == i;
+                    children:
+                        musicCon.songs.asMap().entries.map((entry) {
+                          final i = entry.key;
+                          final s = entry.value;
+                          final isPlaying = musicCon.currentIndex.value == i;
 
-                      return CupertinoListTile(
-                        leading: Icon(
-                          CupertinoIcons.music_note_2,
-                          size: 30,
-                          color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                        ),
-                        title: Text(
-                          s.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CupertinoTheme.of(context).textTheme.textStyle,
-                        ),
-                        subtitle: Text(
-                          s.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                          ),
-                        ),
-                        trailing: isPlaying
-                            ? Icon(
-                                CupertinoIcons.waveform,
-                                color: CupertinoTheme.of(context).primaryColor,
-                                size: 24,
-                              )
-                            : null,
-                        onTap: () => musicCon.playIndex(i),
-                      );
-                    }).toList(),
+                          return CupertinoListTile(
+                            leading: Icon(
+                              CupertinoIcons.music_note_2,
+                              size: 30,
+                              color: CupertinoColors.secondaryLabel.resolveFrom(
+                                context,
+                              ),
+                            ),
+                            title: Text(
+                              s.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  CupertinoTheme.of(
+                                    context,
+                                  ).textTheme.textStyle,
+                            ),
+                            subtitle: Text(
+                              s.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: CupertinoColors.secondaryLabel
+                                    .resolveFrom(context),
+                              ),
+                            ),
+                            trailing:
+                                isPlaying
+                                    ? Icon(
+                                      CupertinoIcons.waveform,
+                                      color:
+                                          CupertinoTheme.of(
+                                            context,
+                                          ).primaryColor,
+                                      size: 24,
+                                    )
+                                    : null,
+                            onTap: () => musicCon.playIndex(i),
+                          );
+                        }).toList(),
                   );
                 }),
               ],
@@ -1024,114 +1076,114 @@ class LocalSongsPage extends StatelessWidget {
 class SecondScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => CupertinoPageScaffold(
-        navigationBar: CupertinoNavigationBar(
-          middle: Text(
-            "Second Screen",
-            style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-          ),
-          backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-          border: null,
-        ),
-        child: SafeArea(
-          child: Center(
-            child: Text(
-              "Second Screen",
-              style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
+    navigationBar: CupertinoNavigationBar(
+      middle: Text(
+        "Second Screen",
+        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
+      ),
+      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
+      border: null,
+    ),
+    child: SafeArea(
+      child: Center(
+        child: Text(
+          "Second Screen",
+          style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
           ),
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class ThirdScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => CupertinoPageScaffold(
-        navigationBar: CupertinoNavigationBar(
-          middle: Text(
-            "Third Screen",
-            style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-          ),
-          backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-          border: null,
-        ),
-        child: SafeArea(
-          child: Center(
-            child: Text(
-              "Third Screen",
-              style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
+    navigationBar: CupertinoNavigationBar(
+      middle: Text(
+        "Third Screen",
+        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
+      ),
+      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
+      border: null,
+    ),
+    child: SafeArea(
+      child: Center(
+        child: Text(
+          "Third Screen",
+          style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
           ),
         ),
-      );
+      ),
+    ),
+  );
 }
 
 /// ---------------- Profile ----------------
 class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => CupertinoPageScaffold(
-        navigationBar: CupertinoNavigationBar(
-          middle: Text(
-            "Profile",
-            style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
+    navigationBar: CupertinoNavigationBar(
+      middle: Text(
+        "Profile",
+        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
+      ),
+      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
+      border: null,
+    ),
+    child: SafeArea(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircleAvatar(
+            radius: 50,
+            backgroundColor: CupertinoTheme.of(context).primaryColor,
+            child: Icon(
+              CupertinoIcons.person_fill,
+              size: 60,
+              color: CupertinoColors.white,
+            ),
           ),
-          backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-          border: null,
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircleAvatar(
-                radius: 50,
-                backgroundColor: CupertinoTheme.of(context).primaryColor,
-                child: Icon(
-                  CupertinoIcons.person_fill,
-                  size: 60,
-                  color: CupertinoColors.white,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                "User Profile",
-                style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                "Manage your music preferences",
-                style: TextStyle(
-                  fontSize: 16,
-                  color: CupertinoColors.secondaryLabel.resolveFrom(context),
-                ),
-              ),
-              const SizedBox(height: 24),
-              CupertinoButton.filled(
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                borderRadius: BorderRadius.circular(10),
-                child: Text(
-                  'Sign Out',
-                  style: TextStyle(
-                    color: CupertinoColors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                onPressed: () {
-                  Get.snackbar('Sign Out', 'Signed out successfully');
-                },
-              ),
-            ],
+          const SizedBox(height: 16),
+          Text(
+            "User Profile",
+            style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-      );
+          const SizedBox(height: 8),
+          Text(
+            "Manage your music preferences",
+            style: TextStyle(
+              fontSize: 16,
+              color: CupertinoColors.secondaryLabel.resolveFrom(context),
+            ),
+          ),
+          const SizedBox(height: 24),
+          CupertinoButton.filled(
+            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            borderRadius: BorderRadius.circular(10),
+            child: Text(
+              'Sign Out',
+              style: TextStyle(
+                color: CupertinoColors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            onPressed: () {
+              Get.snackbar('Sign Out', 'Signed out successfully');
+            },
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 /// ---------------- Player UI ----------------
@@ -1159,29 +1211,50 @@ class PlayerUI extends StatelessWidget {
     final expandedSize = screenHeight * 0.4;
 
     final imageSize = lerpDouble(collapsedSize, expandedSize, percentage)!;
-    final imageLeft = lerpDouble(screenWidth * 0.023, (screenWidth - expandedSize) / 2, percentage)!;
-    final imageTop = lerpDouble((playerMinHeight - collapsedSize) / 2, screenHeight * 0.19, percentage)!;
+    final imageLeft =
+        lerpDouble(
+          screenWidth * 0.023,
+          (screenWidth - expandedSize) / 2,
+          percentage,
+        )!;
+    final imageTop =
+        lerpDouble(
+          (playerMinHeight - collapsedSize) / 2,
+          screenHeight * 0.19,
+          percentage,
+        )!;
     final imageRadius = lerpDouble(10.0, 20.0, percentage)!;
 
     final titleSize = lerpDouble(16.0, 24.0, percentage)!;
     final titleWidth = lerpDouble(245.0, 320.0, percentage)!;
     final artistSize = lerpDouble(14.0, 18.0, percentage)!;
-    final textLeft = lerpDouble(screenWidth * 0.178, screenWidth * 0.08, percentage)!;
-    final textTop = lerpDouble(screenHeight * 0.014, screenHeight * 0.68, percentage)!;
+    final textLeft =
+        lerpDouble(screenWidth * 0.178, screenWidth * 0.08, percentage)!;
+    final textTop =
+        lerpDouble(screenHeight * 0.014, screenHeight * 0.68, percentage)!;
 
     final collapsedIconSize = screenHeight * 0.035;
     final expandedIconSize = screenHeight * 0.05;
-    final iconSize = lerpDouble(collapsedIconSize, expandedIconSize, percentage)!;
-    final buttonLeft = lerpDouble(screenWidth - screenWidth * 0.18, screenWidth / 2 - iconSize * 0.8, percentage)!;
-    final buttonTop = lerpDouble(screenHeight * 0.012, screenHeight * 0.825, percentage)!;
+    final iconSize =
+        lerpDouble(collapsedIconSize, expandedIconSize, percentage)!;
+    final buttonLeft =
+        lerpDouble(
+          screenWidth - screenWidth * 0.18,
+          screenWidth / 2 - iconSize * 0.8,
+          percentage,
+        )!;
+    final buttonTop =
+        lerpDouble(screenHeight * 0.012, screenHeight * 0.825, percentage)!;
 
-    final sliderTop = lerpDouble(screenHeight * 0.079, screenHeight * 0.768, percentage)!;
+    final sliderTop =
+        lerpDouble(screenHeight * 0.079, screenHeight * 0.768, percentage)!;
     final horizontalPadding = lerpDouble(0, screenWidth * 0.06, percentage)!;
 
     final bgColor = lerpDouble(0.08, 0.05, percentage)!;
     final bgTopRadius = lerpDouble(20, 0, percentage)!;
 
-    final sleeperTop = lerpDouble(screenHeight * 0.3, screenHeight * 0.94, percentage)!;
+    final sleeperTop =
+        lerpDouble(screenHeight * 0.3, screenHeight * 0.94, percentage)!;
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.primary.withOpacity(bgColor),
@@ -1203,7 +1276,9 @@ class PlayerUI extends StatelessWidget {
                 children: [
                   // Slider
                   Padding(
-                    padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: horizontalPadding,
+                    ),
                     child: Obx(() {
                       final dur = musicCon.duration.value.inMilliseconds;
                       final pos = musicCon.position.value.inMilliseconds;
@@ -1211,14 +1286,20 @@ class PlayerUI extends StatelessWidget {
                       if (dur > 0) value = (pos / dur).clamp(0.0, 1.0);
                       return SliderTheme(
                         data: SliderTheme.of(context).copyWith(
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 2),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 0),
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 2,
+                          ),
+                          overlayShape: const RoundSliderOverlayShape(
+                            overlayRadius: 0,
+                          ),
                           trackHeight: lerpDouble(3, 8, percentage)!,
                         ),
                         child: Slider(
                           value: value,
                           onChanged: (v) {
-                            final seekMs = ((musicCon.duration.value.inMilliseconds) * v).round();
+                            final seekMs =
+                                ((musicCon.duration.value.inMilliseconds) * v)
+                                    .round();
                             musicCon.seekTo(Duration(milliseconds: seekMs));
                           },
                         ),
@@ -1231,7 +1312,9 @@ class PlayerUI extends StatelessWidget {
                       children: [
                         SizedBox(height: screenHeight * 0.015),
                         Padding(
-                          padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.075),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: screenWidth * 0.075,
+                          ),
                           child: Obx(() {
                             final pos = musicCon.position.value;
                             final dur = musicCon.duration.value;
@@ -1239,8 +1322,14 @@ class PlayerUI extends StatelessWidget {
                             return Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(fmt(pos), style: Theme.of(context).textTheme.bodySmall),
-                                Text(fmt(dur), style: Theme.of(context).textTheme.bodySmall),
+                                Text(
+                                  fmt(pos),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                Text(
+                                  fmt(dur),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
                               ],
                             );
                           }),
@@ -1256,9 +1345,14 @@ class PlayerUI extends StatelessWidget {
                                 child: Icon(
                                   CupertinoIcons.shuffle,
                                   size: screenHeight * 0.033,
-                                  color: musicCon.isShuffling.value
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                                  color:
+                                      musicCon.isShuffling.value
+                                          ? Theme.of(
+                                            context,
+                                          ).colorScheme.primary
+                                          : Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                 ),
                                 onPressed: musicCon.toggleShuffle,
                               ),
@@ -1269,7 +1363,10 @@ class PlayerUI extends StatelessWidget {
                               child: Icon(
                                 CupertinoIcons.backward_end_alt_fill,
                                 size: screenHeight * 0.042,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
                               ),
                               onPressed: musicCon.prev,
                             ),
@@ -1279,7 +1376,10 @@ class PlayerUI extends StatelessWidget {
                               child: Icon(
                                 CupertinoIcons.forward_end_alt_fill,
                                 size: screenHeight * 0.042,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
                               ),
                               onPressed: musicCon.next,
                             ),
@@ -1291,9 +1391,14 @@ class PlayerUI extends StatelessWidget {
                                 child: Icon(
                                   _getRepeatIcon(musicCon.loopMode.value),
                                   size: screenHeight * 0.033,
-                                  color: musicCon.loopMode.value != LoopMode.off
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                                  color:
+                                      musicCon.loopMode.value != LoopMode.off
+                                          ? Theme.of(
+                                            context,
+                                          ).colorScheme.primary
+                                          : Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                 ),
                                 onPressed: musicCon.toggleLoopMode,
                               ),
@@ -1329,7 +1434,10 @@ class PlayerUI extends StatelessWidget {
               }
 
               final idx = musicCon.currentIndex.value;
-              final hasSong = musicCon.songs.isNotEmpty && idx >= 0 && idx < musicCon.songs.length;
+              final hasSong =
+                  musicCon.songs.isNotEmpty &&
+                  idx >= 0 &&
+                  idx < musicCon.songs.length;
               final song = hasSong ? musicCon.songs[idx] : null;
 
               return ClipRRect(
@@ -1338,26 +1446,27 @@ class PlayerUI extends StatelessWidget {
                   height: imageSize,
                   width: imageSize,
                   color: Theme.of(context).colorScheme.primary,
-                  child: song?.cover != null && song!.cover!.isNotEmpty
-                      ? Image.network(
-                          song.cover!,
-                          width: imageSize,
-                          height: imageSize,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            print("Image load error: $error");
-                            return Icon(
-                              CupertinoIcons.music_note_2,
-                              color: Theme.of(context).colorScheme.onPrimary,
-                              size: imageSize * 0.4,
-                            );
-                          },
-                        )
-                      : Icon(
-                          CupertinoIcons.music_note_2,
-                          color: Theme.of(context).colorScheme.onPrimary,
-                          size: imageSize * 0.4,
-                        ),
+                  child:
+                      song?.cover != null && song!.cover!.isNotEmpty
+                          ? Image.network(
+                            song.cover!,
+                            width: imageSize,
+                            height: imageSize,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              print("Image load error: $error");
+                              return Icon(
+                                CupertinoIcons.music_note_2,
+                                color: Theme.of(context).colorScheme.onPrimary,
+                                size: imageSize * 0.4,
+                              );
+                            },
+                          )
+                          : Icon(
+                            CupertinoIcons.music_note_2,
+                            color: Theme.of(context).colorScheme.onPrimary,
+                            size: imageSize * 0.4,
+                          ),
                 ),
               );
             }),
@@ -1379,7 +1488,10 @@ class PlayerUI extends StatelessWidget {
                         color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
-                    SizedBox(height: lerpDouble(screenHeight * 0.004, 0.0, percentage)!),
+                    SizedBox(
+                      height:
+                          lerpDouble(screenHeight * 0.004, 0.0, percentage)!,
+                    ),
                     Text(
                       'Please wait',
                       style: TextStyle(
@@ -1392,7 +1504,10 @@ class PlayerUI extends StatelessWidget {
               }
 
               final idx = musicCon.currentIndex.value;
-              final has = musicCon.songs.isNotEmpty && idx >= 0 && idx < musicCon.songs.length;
+              final has =
+                  musicCon.songs.isNotEmpty &&
+                  idx >= 0 &&
+                  idx < musicCon.songs.length;
               final title = has ? musicCon.songs[idx].title : 'Song Title';
               final artist = has ? musicCon.songs[idx].artist : 'Artist Name';
               return Column(
@@ -1410,7 +1525,9 @@ class PlayerUI extends StatelessWidget {
                       ),
                     ),
                   ),
-                  SizedBox(height: lerpDouble(screenHeight * 0.004, 0.0, percentage)!),
+                  SizedBox(
+                    height: lerpDouble(screenHeight * 0.004, 0.0, percentage)!,
+                  ),
                   Text(
                     artist,
                     style: TextStyle(
@@ -1467,44 +1584,56 @@ class PlayerUI extends StatelessWidget {
                 opacity: percentage,
                 child: AnimatedSwitcher(
                   duration: Duration(milliseconds: 300),
-                  transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-                  child: hasTimer
-                      ? CupertinoButton(
-                          key: ValueKey('timer_text'),
-                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          borderRadius: BorderRadius.circular(12),
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                          onPressed: () => showSleepTimerDialog(context),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                CupertinoIcons.moon_zzz_fill,
-                                size: screenHeight * 0.022,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                _formatDuration(timer!),
-                                style: TextStyle(
-                                  fontSize: screenHeight * 0.022,
-                                  fontWeight: FontWeight.bold,
+                  transitionBuilder:
+                      (child, anim) =>
+                          ScaleTransition(scale: anim, child: child),
+                  child:
+                      hasTimer
+                          ? CupertinoButton(
+                            key: ValueKey('timer_text'),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.1),
+                            onPressed: () => showSleepTimerDialog(context),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.moon_zzz_fill,
+                                  size: screenHeight * 0.022,
                                   color: Theme.of(context).colorScheme.primary,
                                 ),
-                              ),
-                            ],
+                                SizedBox(width: 4),
+                                Text(
+                                  _formatDuration(timer!),
+                                  style: TextStyle(
+                                    fontSize: screenHeight * 0.022,
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                          : CupertinoButton(
+                            key: ValueKey('moon_icon'),
+                            padding: EdgeInsets.zero,
+                            child: Icon(
+                              CupertinoIcons.moon_zzz_fill,
+                              size: screenHeight * 0.03,
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                            ),
+                            onPressed: () => showSleepTimerDialog(context),
                           ),
-                        )
-                      : CupertinoButton(
-                          key: ValueKey('moon_icon'),
-                          padding: EdgeInsets.zero,
-                          child: Icon(
-                            CupertinoIcons.moon_zzz_fill,
-                            size: screenHeight * 0.03,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                          onPressed: () => showSleepTimerDialog(context),
-                        ),
                 ),
               );
             }),
@@ -1530,51 +1659,52 @@ class PlayerUI extends StatelessWidget {
 
     showCupertinoDialog(
       context: context,
-      builder: (BuildContext context) => CupertinoAlertDialog(
-        title: const Text("Sleep Timer"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Choose when playback should stop."),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 150,
-              child: CupertinoPicker(
-                itemExtent: 32.0,
-                onSelectedItemChanged: (int index) {
-                  selectedIndex = index;
-                },
-                children: List<Widget>.generate(13, (int index) {
-                  if (index == 0) {
-                    return const Center(child: Text('Off'));
-                  }
-                  final minutes = index * 5;
-                  return Center(child: Text('$minutes Minutes'));
-                }),
-              ),
+      builder:
+          (BuildContext context) => CupertinoAlertDialog(
+            title: const Text("Sleep Timer"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Choose when playback should stop."),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 150,
+                  child: CupertinoPicker(
+                    itemExtent: 32.0,
+                    onSelectedItemChanged: (int index) {
+                      selectedIndex = index;
+                    },
+                    children: List<Widget>.generate(13, (int index) {
+                      if (index == 0) {
+                        return const Center(child: Text('Off'));
+                      }
+                      final minutes = index * 5;
+                      return Center(child: Text('$minutes Minutes'));
+                    }),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              CupertinoDialogAction(
+                onPressed: () {
+                  if (selectedIndex > 0) {
+                    final minutes = selectedIndex * 5;
+                    musicCon.setSleepTimer(Duration(minutes: minutes));
+                  } else {
+                    musicCon.setSleepTimer(null);
+                  }
+                  Navigator.pop(context);
+                },
+                isDefaultAction: true,
+                child: const Text("Done"),
+              ),
+            ],
           ),
-          CupertinoDialogAction(
-            onPressed: () {
-              if (selectedIndex > 0) {
-                final minutes = selectedIndex * 5;
-                musicCon.setSleepTimer(Duration(minutes: minutes));
-              } else {
-                musicCon.setSleepTimer(null);
-              }
-              Navigator.pop(context);
-            },
-            isDefaultAction: true,
-            child: const Text("Done"),
-          ),
-        ],
-      ),
     );
   }
 }
