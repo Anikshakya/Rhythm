@@ -1,25 +1,22 @@
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:ffi';
-import 'dart:io';
 import 'package:ffi/ffi.dart';
-
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
 
-typedef ReadFlacMetadataNative = Pointer<Utf8> Function(Pointer<Utf8> filePath);
-typedef ReadFlacMetadataDart = Pointer<Utf8> Function(Pointer<Utf8> filePath);
+/// ------------------- NATIVE FUNCTION TYPEDEF (Optional for future FFI) -------------------
+// typedef ReadFlacMetadataNative = Pointer<Utf8> Function(Pointer<Utf8> filePath);
+// typedef ReadFlacMetadataDart = Pointer<Utf8> Function(Pointer<Utf8> filePath);
 
 void main() {
   runApp(const MyApp());
 }
 
-/// -------------------- AUDIO METADATA CLASS --------------------
+/// ==================== AUDIO METADATA EXTRACTOR ====================
 class AudioMetadata {
   String? title;
   String? artist;
@@ -37,6 +34,7 @@ class AudioMetadata {
     this.albumArt,
   });
 
+  /// Extract metadata from file based on extension
   static Future<AudioMetadata?> fromFile(File file) async {
     try {
       final bytes = await file.readAsBytes();
@@ -44,36 +42,41 @@ class AudioMetadata {
 
       switch (ext) {
         case 'mp3':
-          return _readMp3(bytes);
+          return _readMp3(bytes, file);
         case 'wav':
-          return _readWav(bytes);
+          return _readWav(file);
         case 'flac':
-          return _readFlac(file);
-        case 'mp4':
-          return _readM4a(bytes);
+          return await _readFlac(file);
         case 'm4a':
-          return _readM4a(bytes);
+        case 'mp4':
         case 'aac':
-          return _readM4a(bytes);
+          return _readM4a(bytes, file);
         default:
           return AudioMetadata(title: file.path.split('/').last);
       }
-    } catch (_) {
+    } catch (e) {
+      print('Metadata extraction failed: $e');
       return AudioMetadata(title: file.path.split('/').last);
     }
   }
 
-  /// -------------------- MP3 --------------------
-  static AudioMetadata _readMp3(Uint8List bytes) {
+  // ------------------- MP3 METADATA -------------------
+  static AudioMetadata _readMp3(Uint8List bytes, File file) {
     final meta = AudioMetadata();
-    if (String.fromCharCodes(bytes.sublist(0, 3)) == 'ID3') {
-      int size = _syncSafeToInt(bytes.sublist(6, 10));
-      int pos = 10;
+    meta.title = 'MP3 Audio';
 
-      while (pos + 10 < size) {
+    // Check ID3 tag
+    if (bytes.length > 10 &&
+        String.fromCharCodes(bytes.sublist(0, 3)) == 'ID3') {
+      final headerSize = 10;
+      final tagSize = _syncSafeToInt(bytes.sublist(6, 10));
+      var pos = headerSize;
+
+      while (pos + 10 < tagSize + headerSize && pos + 10 < bytes.length) {
         final frameId = ascii.decode(bytes.sublist(pos, pos + 4));
         final frameSize = _bytesToInt(bytes.sublist(pos + 4, pos + 8));
-        if (frameSize <= 0) break;
+        if (frameSize <= 0 || pos + 10 + frameSize > bytes.length) break;
+
         final frameData = bytes.sublist(pos + 10, pos + 10 + frameSize);
 
         switch (frameId) {
@@ -93,12 +96,12 @@ class AudioMetadata {
             meta.albumArt = _decodeApic(frameData);
             break;
         }
-
         pos += 10 + frameSize;
       }
     }
+
     meta.durationMs = _estimateMp3Duration(bytes);
-    if (meta.title == null) meta.title = 'MP3 Audio';
+    meta.title ??= file.path.split('/').last;
     return meta;
   }
 
@@ -106,43 +109,45 @@ class AudioMetadata {
       (bytes[0] << 21) | (bytes[1] << 14) | (bytes[2] << 7) | bytes[3];
 
   static int _bytesToInt(List<int> bytes) =>
-      bytes.fold(0, (prev, b) => (prev << 8) + b);
+      bytes.fold(0, (a, b) => (a << 8) + b);
 
-  static String _decodeTextFrame(Uint8List frameData) {
-    if (frameData.isEmpty) return '';
-    switch (frameData[0]) {
-      case 0:
-        return ascii.decode(frameData.sublist(1)).trim();
-      case 3:
-        return utf8.decode(frameData.sublist(1)).trim();
-      default:
-        return '';
+  static String _decodeTextFrame(Uint8List data) {
+    if (data.isEmpty) return '';
+    final encoding = data[0];
+    final textBytes = data.sublist(1);
+    try {
+      return encoding == 0
+          ? ascii.decode(textBytes).trim()
+          : utf8.decode(textBytes).trim();
+    } catch (_) {
+      return '';
     }
   }
 
-  static Uint8List? _decodeApic(Uint8List frameData) {
-    int i = 1;
-    while (i < frameData.length && frameData[i] != 0) i++;
-    i++;
-    i++;
-    while (i < frameData.length && frameData[i] != 0) i++;
-    i++;
-    return frameData.sublist(i);
+  static Uint8List? _decodeApic(Uint8List data) {
+    try {
+      var i = 1;
+      while (i < data.length && data[i] != 0) i++;
+      i += 2; // skip null + picture type
+      while (i < data.length && data[i] != 0) i++;
+      i++;
+      return data.sublist(i);
+    } catch (_) {
+      return null;
+    }
   }
 
   static int _estimateMp3Duration(Uint8List bytes) {
-    final bitrate = 128 * 1024;
-    final sizeBits = bytes.length * 8;
-    return (sizeBits / bitrate * 1000).toInt();
+    const bitrate = 128000; // 128 kbps fallback
+    return ((bytes.length * 8) / bitrate * 1000).toInt();
   }
 
-  /// -------------------- WAV --------------------
-  static AudioMetadata _readWav(Uint8List bytes) {
-    final meta = AudioMetadata();
-    meta.title = 'WAV Audio';
-    return meta;
+  // ------------------- WAV METADATA -------------------
+  static AudioMetadata _readWav(File file) {
+    return AudioMetadata(title: file.path.split('/').last);
   }
 
+  // ------------------- FLAC METADATA -------------------
   /// -------------------- FLAC --------------------
 
   static Future<AudioMetadata> _readFlac(File file) async {
@@ -304,18 +309,16 @@ class AudioMetadata {
     }
   }
 
-  /// -------------------- M4A / AAC --------------------
-  static AudioMetadata _readM4a(Uint8List bytes) {
+  // ------------------- M4A METADATA -------------------
+  static AudioMetadata _readM4a(Uint8List bytes, File file) {
     final meta = AudioMetadata();
-
     int pos = 0;
+
     while (pos + 8 < bytes.length) {
       final size = _bytesToInt(bytes.sublist(pos, pos + 4));
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
+      if (size < 8 || pos + size > bytes.length) break;
 
-      if (size < 8) break;
-
-      // Only look into 'moov', 'udta', 'meta'
       if (type == 'moov' || type == 'udta' || type == 'meta') {
         int end = pos + size;
         pos += 8;
@@ -324,61 +327,53 @@ class AudioMetadata {
           final childType = String.fromCharCodes(
             bytes.sublist(pos + 4, pos + 8),
           );
-          if (childSize < 8) break;
+          if (childSize < 8 || pos + childSize > end) break;
 
-          // Important tags in 'ilst' box
+          final dataStart = pos + 8;
+          final dataEnd = pos + childSize;
+          final atomData = bytes.sublist(dataStart, dataEnd);
+
           switch (childType) {
             case '©nam':
-              meta.title = _readUtf8String(
-                bytes.sublist(pos + 8, pos + childSize),
-              );
+              meta.title = _readAtomString(atomData);
               break;
             case '©ART':
-              meta.artist = _readUtf8String(
-                bytes.sublist(pos + 8, pos + childSize),
-              );
+              meta.artist = _readAtomString(atomData);
               break;
             case '©alb':
-              meta.album = _readUtf8String(
-                bytes.sublist(pos + 8, pos + childSize),
-              );
+              meta.album = _readAtomString(atomData);
               break;
             case '©gen':
-              meta.genre = _readUtf8String(
-                bytes.sublist(pos + 8, pos + childSize),
-              );
+              meta.genre = _readAtomString(atomData);
               break;
           }
-
           pos += childSize;
         }
-      } else {
-        pos += size;
+        continue;
       }
+      pos += size;
     }
 
+    meta.title ??= file.path.split('/').last;
     return meta;
   }
 
-  static String _readUtf8String(Uint8List data) {
-    // Skip the first 4–8 bytes which are flags/size in the atom
-    int start = 0;
-    if (data.length > 8) start = 8;
-    return utf8.decode(data.sublist(start)).trim();
+  static String _readAtomString(Uint8List data) {
+    if (data.length <= 8) return '';
+    return utf8.decode(data.sublist(8)).trim();
   }
 }
 
-/// -------------------- SONG INFO --------------------
+/// ==================== SONG INFO HOLDER ====================
 class SongInfo {
-  File file;
-  AudioMetadata meta;
+  final File file;
+  final AudioMetadata meta;
   SongInfo({required this.file, required this.meta});
 }
 
-/// -------------------- APP --------------------
+/// ==================== MAIN APP ====================
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
-
   @override
   State<MyApp> createState() => _MyAppState();
 }
@@ -403,7 +398,7 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
-/// -------------------- MUSIC PLAYER SCREEN --------------------
+/// ==================== MUSIC PLAYER SCREEN ====================
 class MusicPlayerScreen extends StatefulWidget {
   final VoidCallback? onToggleTheme;
   const MusicPlayerScreen({super.key, this.onToggleTheme});
@@ -420,107 +415,93 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
-
   bool _isScanning = false;
   int _scannedFiles = 0;
   bool _isLoading = false;
-
-  TabController? _tabController;
+  late TabController _tabController;
 
   final List<String> _supportedFormats = [
     'mp3',
     'wav',
-    'aac',
+    'flac',
     'm4a',
     'mp4',
+    'aac',
     'ogg',
-    'flac',
     'wma',
     'amr',
     'aiff',
     'opus',
-    '3gp',
   ];
 
   @override
   void initState() {
     super.initState();
-    _initializeApp();
     _tabController = TabController(length: 3, vsync: this);
+    _initializeApp();
     _setupAudioPlayer();
   }
 
   @override
   void dispose() {
     _audioPlayer.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
+  /// Initialize permissions
   Future<void> _initializeApp() async {
     await _requestPermission();
   }
 
+  /// Setup audio player listeners
   void _setupAudioPlayer() {
     _audioPlayer.onPlayerStateChanged.listen((state) {
       setState(() => _isPlaying = state == PlayerState.playing);
     });
 
-    _audioPlayer.onDurationChanged.listen((duration) {
-      setState(() => _duration = duration);
+    _audioPlayer.onDurationChanged.listen((d) {
+      setState(() => _duration = d);
     });
 
-    _audioPlayer.onPositionChanged.listen((position) {
-      setState(() => _position = position);
+    _audioPlayer.onPositionChanged.listen((p) {
+      setState(() => _position = p);
     });
 
     _audioPlayer.onPlayerComplete.listen((_) {
-      setState(() {
-        _isPlaying = false;
-        _position = Duration.zero;
-        _playNext();
-      });
+      _playNext();
     });
   }
 
+  /// Request storage permissions
   Future<bool> _requestPermission() async {
     var status = await Permission.storage.status;
     if (!status.isGranted) status = await Permission.storage.request();
 
-    if (await Permission.audio.status.isDenied)
-      await Permission.audio.request();
-
-    var manageStorageStatus = await Permission.manageExternalStorage.status;
-    if (!manageStorageStatus.isGranted) {
-      await Permission.manageExternalStorage.request();
+    if (Platform.isAndroid) {
+      final manage = await Permission.manageExternalStorage.status;
+      if (!manage.isGranted) await Permission.manageExternalStorage.request();
     }
 
     return status.isGranted;
   }
 
+  /// Check if file is supported music
   bool _isMusicFile(String path) {
-    try {
-      String ext = path.toLowerCase().split('.').last;
-      return _supportedFormats.contains(ext);
-    } catch (e) {
-      return false;
-    }
+    final ext = path.toLowerCase().split('.').last;
+    return _supportedFormats.contains(ext);
   }
 
+  /// Remove duplicate files by path
   List<SongInfo> _removeDuplicates(List<SongInfo> files) {
-    Set<String> paths = {};
-    List<SongInfo> uniqueFiles = [];
-    for (var file in files) {
-      if (!paths.contains(file.file.path)) {
-        paths.add(file.file.path);
-        uniqueFiles.add(file);
-      }
-    }
-    return uniqueFiles;
+    final seen = <String>{};
+    return files.where((f) => seen.add(f.file.path)).toList();
   }
 
+  /// Extract filename
   String _getFileName(String path) => path.split('/').last;
 
-  /// ------------------- SCAN FUNCTION -------------------
+  // ==================== SCAN MUSIC ====================
   Future<void> _startSafeAutoScan() async {
     setState(() {
       _isScanning = true;
@@ -528,37 +509,29 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     });
 
     try {
-      List<SongInfo> foundFiles = [];
-      List<Directory> accessibleDirs = await _getAccessibleDirectories();
+      final found = <SongInfo>[];
+      final dirs = await _getAccessibleDirectories();
 
-      for (var dir in accessibleDirs) {
-        if (await dir.exists()) {
-          List<File> files = await _scanDirectoryForMusic(dir);
-          for (var f in files) {
-            final meta = await AudioMetadata.fromFile(f);
-            if (meta != null) foundFiles.add(SongInfo(file: f, meta: meta));
-          }
+      for (final dir in dirs) {
+        final files = await _scanDirectoryForMusic(dir);
+        for (final file in files) {
+          final meta = await AudioMetadata.fromFile(file);
+          if (meta != null) found.add(SongInfo(file: file, meta: meta));
         }
       }
 
-      foundFiles = _removeDuplicates(foundFiles);
-      foundFiles.sort(
-        (a, b) =>
-            a.file.path.toLowerCase().compareTo(b.file.path.toLowerCase()),
-      );
+      final unique = _removeDuplicates(found)
+        ..sort((a, b) => a.file.path.compareTo(b.file.path));
 
       setState(() {
-        _musicFiles = foundFiles;
+        _musicFiles = unique;
         _isScanning = false;
       });
 
-      if (_musicFiles.isNotEmpty)
-        _showMessage('Found ${_musicFiles.length} music files');
-      else
-        _showMessage('No music files found');
+      _showMessage('Found ${unique.length} songs');
     } catch (e) {
       setState(() => _isScanning = false);
-      _showError('Error scanning: $e');
+      _showError('Scan failed: $e');
     }
   }
 
@@ -595,67 +568,58 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   }
 
   Future<List<File>> _scanDirectoryForMusic(Directory dir) async {
-    List<File> musicFiles = [];
+    final music = <File>[];
     try {
-      await for (FileSystemEntity entity in dir.list(recursive: true)) {
-        if (entity is File) {
+      await for (final entity in dir.list(recursive: true)) {
+        if (entity is File && _isMusicFile(entity.path)) {
+          music.add(entity);
           setState(() => _scannedFiles++);
-          if (_isMusicFile(entity.path)) musicFiles.add(entity);
         }
-        if (_scannedFiles > 10000) break;
+        if (_scannedFiles > 15000) break;
       }
     } catch (e) {
-      print('Error scanning ${dir.path}: $e');
+      print('Scan error in ${dir.path}: $e');
     }
-    return musicFiles;
+    return music;
   }
 
-  /// ------------------- PICK FILES -------------------
+  // ==================== MANUAL FILE PICKER ====================
   Future<void> _pickMusicFilesManually() async {
     setState(() => _isLoading = true);
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.audio,
         allowMultiple: true,
       );
 
-      if (result != null && result.files.isNotEmpty) {
-        List<SongInfo> newFiles = [];
-        for (var path in result.paths) {
-          if (path != null) {
-            final file = File(path);
+      if (result?.files.isNotEmpty ?? false) {
+        final newSongs = <SongInfo>[];
+        for (final platformFile in result!.files) {
+          if (platformFile.path != null) {
+            final file = File(platformFile.path!);
             final meta = await AudioMetadata.fromFile(file);
-            newFiles.add(SongInfo(file: file, meta: meta!));
+            newSongs.add(SongInfo(file: file, meta: meta!));
           }
         }
+
         setState(() {
-          _musicFiles.addAll(newFiles);
+          _musicFiles.addAll(newSongs);
           _musicFiles = _removeDuplicates(_musicFiles);
-          _currentPlayingIndex = null;
-          _isPlaying = false;
-          _position = Duration.zero;
-          _duration = Duration.zero;
         });
-        _showMessage('Added ${newFiles.length} music files');
+        _showMessage('Added ${newSongs.length} songs');
       }
     } catch (e) {
-      _showError('Error picking files: $e');
+      _showError('Pick failed: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  /// ------------------- PLAY CONTROLS -------------------
+  // ==================== PLAYBACK CONTROLS ====================
   Future<void> _playMusic(int index) async {
-    if (_currentPlayingIndex == index && _isPlaying) {
-      await _audioPlayer.pause();
-      setState(() => _isPlaying = false);
-      return;
-    }
-
-    if (_currentPlayingIndex == index && !_isPlaying) {
-      await _audioPlayer.resume();
-      setState(() => _isPlaying = true);
+    if (_currentPlayingIndex == index) {
+      _isPlaying ? await _audioPlayer.pause() : await _audioPlayer.resume();
+      setState(() => _isPlaying = !_isPlaying);
       return;
     }
 
@@ -667,20 +631,20 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         _isPlaying = true;
       });
     } catch (e) {
-      _showError('Error playing music: $e');
+      _showError('Play failed: $e');
     }
   }
 
   Future<void> _playNext() async {
     if (_currentPlayingIndex != null &&
         _currentPlayingIndex! < _musicFiles.length - 1) {
-      _playMusic(_currentPlayingIndex! + 1);
+      await _playMusic(_currentPlayingIndex! + 1);
     }
   }
 
   Future<void> _playPrevious() async {
     if (_currentPlayingIndex != null && _currentPlayingIndex! > 0) {
-      _playMusic(_currentPlayingIndex! - 1);
+      await _playMusic(_currentPlayingIndex! - 1);
     }
   }
 
@@ -692,37 +656,57 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     });
   }
 
-  void _seekToPosition(double value) {
-    final pos = Duration(milliseconds: value.toInt());
-    _audioPlayer.seek(pos);
+  void _seekTo(double ms) {
+    _audioPlayer.seek(Duration(milliseconds: ms.toInt()));
   }
 
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    return '${twoDigits(duration.inMinutes.remainder(60))}:${twoDigits(duration.inSeconds.remainder(60))}';
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+  void _showError(String msg) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+
+  void _showMessage(String msg) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.green));
+
+  // ==================== GROUPING HELPERS ====================
+  Map<String, List<SongInfo>> _groupByAlbum() {
+    final map = <String, List<SongInfo>>{};
+    for (final song in _musicFiles) {
+      final key =
+          song.meta.album?.trim().isNotEmpty == true
+              ? song.meta.album!
+              : 'Unknown Album';
+      map.putIfAbsent(key, () => []).add(song);
+    }
+    return map;
   }
 
-  void _showMessage(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+  Map<String, List<SongInfo>> _groupByArtist() {
+    final map = <String, List<SongInfo>>{};
+    for (final song in _musicFiles) {
+      final key =
+          song.meta.artist?.trim().isNotEmpty == true
+              ? song.meta.artist!
+              : 'Unknown Artist';
+      map.putIfAbsent(key, () => []).add(song);
+    }
+    return map;
   }
 
-  /// ------------------- BUILD -------------------
+  Uint8List? _getGroupCoverArt(List<SongInfo> songs) {
+    for (final song in songs) {
+      if (song.meta.albumArt != null) return song.meta.albumArt;
+    }
+    return null;
+  }
+
+  // ==================== UI BUILD ====================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -745,15 +729,16 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
       ),
       body: Column(
         children: [
-          if (_currentPlayingIndex != null) _buildNowPlayingSection(),
-          if (_isLoading || _isScanning) _buildProgressIndicator(),
+          if (_currentPlayingIndex != null) _buildNowPlayingBar(),
+          if (_isScanning) _buildScanProgress(),
+          if (_isLoading) const LinearProgressIndicator(),
           Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildMusicList(_musicFiles),
-                _buildGroupedList(_groupByAlbum()),
-                _buildGroupedList(_groupByArtist()),
+                _buildSongsTab(),
+                _buildAlbumsTab(),
+                _buildArtistsTab(),
               ],
             ),
           ),
@@ -764,44 +749,41 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         children: [
           FloatingActionButton(
             heroTag: 'scan',
-            child: const Icon(Icons.search),
             onPressed: _startSafeAutoScan,
+            child: const Icon(Icons.search),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           FloatingActionButton(
-            heroTag: 'pick',
-            child: const Icon(Icons.add),
+            heroTag: 'add',
             onPressed: _pickMusicFilesManually,
+            child: const Icon(Icons.add),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildProgressIndicator() {
+  Widget _buildScanProgress() {
     return LinearProgressIndicator(
       value: _scannedFiles / 10000,
-      minHeight: 5,
       backgroundColor: Colors.grey.shade300,
-      color: Colors.blue,
     );
   }
 
-  Widget _buildMusicList(List<SongInfo> files) {
-    if (files.isEmpty) return const Center(child: Text('No Music Files'));
+  Widget _buildSongsTab() {
+    if (_musicFiles.isEmpty) return const Center(child: Text('No songs found'));
     return ListView.builder(
-      itemCount: files.length,
-      itemBuilder: (context, index) {
-        final song = files[index];
+      itemCount: _musicFiles.length,
+      itemBuilder: (_, i) {
+        final song = _musicFiles[i];
+        final isPlaying = _currentPlayingIndex == i && _isPlaying;
         return ListTile(
           leading:
-              _currentPlayingIndex == index && _isPlaying
-                  ? const Icon(Icons.equalizer)
+              isPlaying
+                  ? const Icon(Icons.equalizer, color: Colors.blue)
                   : (song.meta.albumArt != null
                       ? ClipRRect(
-                        borderRadius: BorderRadius.circular(
-                          8,
-                        ), // optional: rounded corners
+                        borderRadius: BorderRadius.circular(8),
                         child: Image.memory(
                           song.meta.albumArt!,
                           width: 50,
@@ -811,77 +793,151 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
                       )
                       : const Icon(Icons.music_note)),
           title: Text(song.meta.title ?? _getFileName(song.file.path)),
-          subtitle: Text(song.meta.artist ?? ''),
-          onTap: () => _playMusic(index),
+          subtitle: Text(song.meta.artist ?? 'Unknown Artist'),
+          onTap: () => _playMusic(i),
         );
       },
     );
   }
 
-  Map<String, List<SongInfo>> _groupByAlbum() {
-    Map<String, List<SongInfo>> map = {};
-    for (var song in _musicFiles) {
-      String key = song.meta.album ?? 'Unknown Album';
-      map.putIfAbsent(key, () => []).add(song);
-    }
-    return map;
-  }
+  Widget _buildAlbumsTab() {
+    final grouped = _groupByAlbum();
+    if (grouped.isEmpty) return const Center(child: Text('No albums'));
 
-  Map<String, List<SongInfo>> _groupByArtist() {
-    Map<String, List<SongInfo>> map = {};
-    for (var song in _musicFiles) {
-      String key = song.meta.artist ?? 'Unknown Artist';
-      map.putIfAbsent(key, () => []).add(song);
-    }
-    return map;
-  }
+    final entries =
+        grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
 
-  Widget _buildGroupedList(Map<String, List<SongInfo>> groupedFiles) {
-    if (groupedFiles.isEmpty)
-      return const Center(child: Text('No Music Files'));
-    return ListView(
-      children:
-          groupedFiles.entries.map((entry) {
-            return ExpansionTile(
-              title: Text(entry.key),
-              children:
-                  entry.value.map((song) {
-                    final index = _musicFiles.indexOf(song);
-                    return ListTile(
-                      leading:
-                          _currentPlayingIndex == index && _isPlaying
-                              ? const Icon(Icons.equalizer)
-                              : const Icon(Icons.music_note),
-                      title: Text(
-                        song.meta.title ?? _getFileName(song.file.path),
-                      ),
-                      subtitle: Text(song.meta.artist ?? ''),
-                      onTap: () => _playMusic(index),
-                    );
-                  }).toList(),
-            );
-          }).toList(),
+    return ListView.builder(
+      itemCount: entries.length,
+      itemBuilder: (_, i) {
+        final entry = entries[i];
+        final cover = _getGroupCoverArt(entry.value);
+        return ExpansionTile(
+          leading:
+              cover != null
+                  ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      cover,
+                      width: 50,
+                      height: 50,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                  : const Icon(Icons.album, size: 50),
+          title: Text(
+            entry.key,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          children:
+              entry.value.map((song) {
+                final idx = _musicFiles.indexOf(song);
+                return ListTile(
+                  leading:
+                      _currentPlayingIndex == idx && _isPlaying
+                          ? const Icon(Icons.play_arrow)
+                          : const Icon(Icons.music_note),
+                  title: Text(song.meta.title ?? _getFileName(song.file.path)),
+                  onTap: () => _playMusic(idx),
+                );
+              }).toList(),
+        );
+      },
     );
   }
 
-  Widget _buildNowPlayingSection() {
-    if (_currentPlayingIndex == null) return const SizedBox.shrink();
+  Widget _buildArtistsTab() {
+    final grouped = _groupByArtist();
+    if (grouped.isEmpty) return const Center(child: Text('No artists'));
+
+    final entries =
+        grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+
+    return ListView.builder(
+      itemCount: entries.length,
+      itemBuilder: (_, i) {
+        final entry = entries[i];
+        final cover = _getGroupCoverArt(entry.value);
+        return ExpansionTile(
+          leading:
+              cover != null
+                  ? ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: Image.memory(
+                      cover,
+                      width: 50,
+                      height: 50,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                  : const CircleAvatar(child: Icon(Icons.person)),
+          title: Text(
+            entry.key,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          children:
+              entry.value.map((song) {
+                final idx = _musicFiles.indexOf(song);
+                return ListTile(
+                  leading:
+                      _currentPlayingIndex == idx && _isPlaying
+                          ? const Icon(Icons.play_arrow)
+                          : const Icon(Icons.music_note),
+                  title: Text(song.meta.title ?? _getFileName(song.file.path)),
+                  subtitle: Text(song.meta.album ?? ''),
+                  onTap: () => _playMusic(idx),
+                );
+              }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildNowPlayingBar() {
     final song = _musicFiles[_currentPlayingIndex!];
     return Container(
-      color: Colors.grey.shade900,
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(12),
+      color: Theme.of(context).appBarTheme.backgroundColor,
       child: Column(
         children: [
-          Text(
-            song.meta.title ?? _getFileName(song.file.path),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white),
+          Row(
+            children: [
+              if (song.meta.albumArt != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    song.meta.albumArt!,
+                    width: 50,
+                    height: 50,
+                    fit: BoxFit.cover,
+                  ),
+                )
+              else
+                const Icon(Icons.music_note, size: 50),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      song.meta.title ?? _getFileName(song.file.path),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      song.meta.artist ?? 'Unknown',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          Text(
-            song.meta.artist ?? '',
-            style: const TextStyle(color: Colors.white70),
-          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Text(
@@ -890,15 +946,13 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
               ),
               Expanded(
                 child: Slider(
+                  value: _position.inMilliseconds.toDouble().clamp(
+                    0,
+                    _duration.inMilliseconds.toDouble(),
+                  ),
                   min: 0,
                   max: _duration.inMilliseconds.toDouble(),
-                  value:
-                      _position.inMilliseconds
-                          .clamp(0, _duration.inMilliseconds)
-                          .toDouble(),
-                  onChanged: _seekToPosition,
-                  activeColor: Colors.white,
-                  inactiveColor: Colors.white38,
+                  onChanged: _seekTo,
                 ),
               ),
               Text(
@@ -912,24 +966,24 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
             children: [
               IconButton(
                 icon: const Icon(Icons.skip_previous),
-                color: Colors.white,
                 onPressed: _playPrevious,
+                color: Colors.white,
               ),
               IconButton(
+                iconSize: 48,
                 icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle),
-                color: Colors.white,
-                iconSize: 40,
                 onPressed: () => _playMusic(_currentPlayingIndex!),
+                color: Colors.white,
               ),
               IconButton(
                 icon: const Icon(Icons.skip_next),
-                color: Colors.white,
                 onPressed: _playNext,
+                color: Colors.white,
               ),
               IconButton(
                 icon: const Icon(Icons.stop),
-                color: Colors.white,
                 onPressed: _stopMusic,
+                color: Colors.white,
               ),
             ],
           ),
