@@ -756,17 +756,11 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
                   children: [
                     Text(
                       song.meta.title ?? _getFileName(song.file.path),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    Text(
-                      song.meta.artist ?? 'Unknown',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
+                    Text(song.meta.artist ?? 'Unknown'),
                   ],
                 ),
               ),
@@ -775,10 +769,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
           const SizedBox(height: 8),
           Row(
             children: [
-              Text(
-                _formatDuration(_position),
-                style: const TextStyle(color: Colors.white70),
-              ),
+              Text(_formatDuration(_position)),
               Expanded(
                 child: Slider(
                   value: _position.inMilliseconds.toDouble().clamp(
@@ -790,10 +781,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
                   onChanged: _seekTo,
                 ),
               ),
-              Text(
-                _formatDuration(_duration),
-                style: const TextStyle(color: Colors.white70),
-              ),
+              Text(_formatDuration(_duration)),
             ],
           ),
           Row(
@@ -802,7 +790,6 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
               IconButton(
                 icon: const Icon(Icons.skip_previous),
                 onPressed: _playPrevious,
-                color: Colors.white,
               ),
               IconButton(
                 iconSize: 48,
@@ -812,18 +799,12 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
                     _playMusic(_currentPlayingIndex!);
                   }
                 },
-                color: Colors.white,
               ),
               IconButton(
                 icon: const Icon(Icons.skip_next),
                 onPressed: _playNext,
-                color: Colors.white,
               ),
-              IconButton(
-                icon: const Icon(Icons.stop),
-                onPressed: _stopMusic,
-                color: Colors.white,
-              ),
+              IconButton(icon: const Icon(Icons.stop), onPressed: _stopMusic),
             ],
           ),
         ],
