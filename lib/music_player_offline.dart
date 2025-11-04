@@ -1,23 +1,173 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:convert';
-import 'dart:ffi';
-import 'package:ffi/ffi.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:audio_service/audio_service.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rhythm/audio_meta_data/audio_meta_data.dart';
 
-/// ------------------- NATIVE FUNCTION TYPEDEF (Optional for future FFI) -------------------
-// typedef ReadFlacMetadataNative = Pointer<Utf8> Function(Pointer<Utf8> filePath);
-// typedef ReadFlacMetadataDart = Pointer<Utf8> Function(Pointer<Utf8> filePath);
+/// A simple data class for your songs
+class SongInfo {
+  final File file;
+  final AudioMetadata meta;
+  SongInfo({required this.file, required this.meta});
+}
 
-void main() {
-  runApp(const MyApp());
+/// Entry point for the background audio task
+/// (Not needed with AudioHandler-based API, safe to remove)
+
+/// The AudioHandler handling background playback / notification controls
+class MyAudioHandler extends BaseAudioHandler with SeekHandler {
+  final _player = AudioPlayer();
+  List<MediaItem> _queue = [];
+  int _currentIndex = 0;
+
+  MyAudioHandler() {
+    _notifyAudioSession();
+    _player.playbackEventStream.listen(_broadcastState);
+    _player.durationStream.listen((duration) {
+      if (duration != null && _queue.isNotEmpty) {
+        final item = _queue[_currentIndex];
+        final newItem = item.copyWith(duration: duration);
+        _queue[_currentIndex] = newItem;
+        mediaItem.add(newItem);
+        BaseAudioHandler().playMediaItem(newItem);
+        BaseAudioHandler().updateQueue(_queue);
+      }
+    });
+  }
+
+  Future<void> _notifyAudioSession() async {
+    // final session = await AudioSession.instance;
+    // await session.configure(AudioSessionConfiguration.music());
+  }
+
+  Future<void> _loadQueue(List<SongInfo> songs, {int startIndex = 0}) async {
+    _queue =
+        songs.map((song) {
+          return MediaItem(
+            id: song.file.path,
+            album: song.meta.album ?? '',
+            title: song.meta.title ?? song.file.path.split('/').last,
+            artist: song.meta.artist ?? '',
+            duration: null, // will update when available
+            artUri:
+                song.meta.albumArt != null
+                    ? Uri.dataFromBytes(
+                      song.meta.albumArt!,
+                      mimeType: 'image/jpeg',
+                    )
+                    : null,
+          );
+        }).toList();
+    // AudioServiceBackground.setQueue(_queue);
+    BaseAudioHandler().updateQueue(_queue);
+    _currentIndex = startIndex;
+    await _player.setAudioSource(
+      ConcatenatingAudioSource(
+        children:
+            _queue.map((item) => AudioSource.uri(Uri.file(item.id))).toList(),
+      ),
+      initialIndex: _currentIndex,
+    );
+    mediaItem.add(_queue[_currentIndex]);
+  }
+
+  void _broadcastState(PlaybackEvent event) {
+    final playing = _player.playing;
+    final controls = [
+      MediaControl.skipToPrevious,
+      if (playing) MediaControl.pause else MediaControl.play,
+      MediaControl.skipToNext,
+      MediaControl.stop,
+    ];
+    final mediaItem_ =
+        (_queue.isNotEmpty && _currentIndex < _queue.length)
+            ? _queue[_currentIndex]
+            : null;
+
+    playbackState.add(
+      PlaybackState(
+        controls: controls,
+        androidCompactActionIndices: const [0, 1, 2],
+        processingState:
+            {
+              ProcessingState.idle: AudioProcessingState.idle,
+              ProcessingState.loading: AudioProcessingState.loading,
+              ProcessingState.buffering: AudioProcessingState.buffering,
+              ProcessingState.ready: AudioProcessingState.ready,
+              ProcessingState.completed: AudioProcessingState.completed,
+            }[_player.processingState]!,
+        playing: playing,
+        updatePosition: _player.position,
+        bufferedPosition: _player.bufferedPosition,
+        speed: _player.speed,
+        queueIndex: _currentIndex,
+      ),
+    );
+
+    if (mediaItem_ != null) {
+      mediaItem.add(mediaItem_);
+    }
+  }
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> stop() async {
+    await _player.stop();
+    await super.stop();
+  }
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> skipToNext() async {
+    if (_currentIndex + 1 < _queue.length) {
+      _currentIndex++;
+      await _player.seek(Duration.zero, index: _currentIndex);
+      mediaItem.add(_queue[_currentIndex]);
+    }
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    if (_currentIndex - 1 >= 0) {
+      _currentIndex--;
+      await _player.seek(Duration.zero, index: _currentIndex);
+      mediaItem.add(_queue[_currentIndex]);
+    }
+  }
+
+  /// A helper method your UI can call to load songs and start at index
+  Future<void> loadSongs(List<SongInfo> songs, {int startIndex = 0}) =>
+      _loadQueue(songs, startIndex: startIndex);
 }
 
 /// ==================== MAIN APP ====================
+late AudioHandler audioHandler;
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  audioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.example.musicplayer.channel.audio',
+      androidNotificationChannelName: 'Music playback',
+      androidNotificationOngoing: true,
+    ),
+  );
+  runApp(const MyApp());
+}
+
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
   @override
@@ -50,12 +200,14 @@ class MusicPlayerScreen extends StatefulWidget {
   const MusicPlayerScreen({super.key, this.onToggleTheme});
 
   @override
-  State<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
+  State<MusicPlayerScreen> createState() => MusicPlayerScreenState();
 }
 
-class _MusicPlayerScreenState extends State<MusicPlayerScreen>
+class MusicPlayerScreenState extends State<MusicPlayerScreen>
     with SingleTickerProviderStateMixin {
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  late final AudioHandler _audioHandler;
+  bool isDarkMode = true;
+
   List<SongInfo> _musicFiles = [];
   int? _currentPlayingIndex;
   bool _isPlaying = false;
@@ -83,15 +235,15 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   @override
   void initState() {
     super.initState();
+    _audioHandler = audioHandler;
     _tabController = TabController(length: 3, vsync: this);
     _initializeApp();
-    _setupAudioPlayer();
     _startSafeAutoScan();
+    _listenToPlaybackState();
   }
 
   @override
   void dispose() {
-    _audioPlayer.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -101,22 +253,27 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
     await _requestPermission();
   }
 
-  /// Setup audio player listeners
-  void _setupAudioPlayer() {
-    _audioPlayer.onPlayerStateChanged.listen((state) {
-      setState(() => _isPlaying = state == PlayerState.playing);
+  /// Setup listener for background handler
+  void _listenToPlaybackState() {
+    _audioHandler.playbackState.listen((state) {
+      setState(() {
+        _isPlaying = state.playing;
+      });
     });
-
-    _audioPlayer.onDurationChanged.listen((d) {
-      setState(() => _duration = d);
+    _audioHandler.mediaItem.listen((item) {
+      if (item != null) {
+        setState(() {
+          _duration = item.duration ?? Duration.zero;
+          _currentPlayingIndex = _musicFiles.indexWhere(
+            (song) => song.file.path == item.id,
+          );
+        });
+      }
     });
-
-    _audioPlayer.onPositionChanged.listen((p) {
-      setState(() => _position = p);
-    });
-
-    _audioPlayer.onPlayerComplete.listen((_) {
-      _playNext();
+    AudioService.position.listen((pos) {
+      setState(() {
+        _position = pos;
+      });
     });
   }
 
@@ -185,11 +342,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   Future<List<Directory>> _getAccessibleDirectories() async {
     List<Directory> dirs = [];
 
-    // Android external storage root
     Directory? extDir = Directory('/storage/emulated/0');
     if (await extDir.exists()) dirs.add(extDir);
 
-    // Optional: add some known subfolders
     List<String> commonPaths = [
       'Music',
       'Download',
@@ -202,11 +357,10 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
       if (await subDir.exists()) dirs.add(subDir);
     }
 
-    // Filter accessible dirs
     List<Directory> accessibleDirs = [];
     for (var dir in dirs) {
       try {
-        await dir.list().take(1).toList(); // test access
+        await dir.list().take(1).toList();
         accessibleDirs.add(dir);
       } catch (_) {}
     }
@@ -238,17 +392,17 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         type: FileType.audio,
         allowMultiple: true,
       );
-
       if (result?.files.isNotEmpty ?? false) {
         final newSongs = <SongInfo>[];
         for (final platformFile in result!.files) {
           if (platformFile.path != null) {
             final file = File(platformFile.path!);
             final meta = await AudioMetadata.fromFile(file);
-            newSongs.add(SongInfo(file: file, meta: meta!));
+            if (meta != null) {
+              newSongs.add(SongInfo(file: file, meta: meta));
+            }
           }
         }
-
         setState(() {
           _musicFiles.addAll(newSongs);
           _musicFiles = _removeDuplicates(_musicFiles);
@@ -266,42 +420,51 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   Future<void> _playMusic(int index) async {
     if (_currentPlayingIndex == index) {
       if (_isPlaying) {
-        await _audioPlayer.pause();
-        setState(() => _isPlaying = false);
+        await _audioHandler.pause();
+        setState(() {});
       } else {
-        await _audioPlayer.resume();
-        setState(() => _isPlaying = true);
+        await _audioHandler.play();
+        setState(() {});
       }
       return;
     }
 
-    try {
-      // await _audioPlayer.stop();
-      await _audioPlayer.play(DeviceFileSource(_musicFiles[index].file.path));
-      setState(() {
-        _currentPlayingIndex = index;
-        _isPlaying = true;
-      });
-    } catch (e) {
-      _showError('Play failed: $e');
+    _currentPlayingIndex = index;
+
+    // Load queue & update mediaItem
+    final handler = _audioHandler as MyAudioHandler;
+    await handler.loadSongs(_musicFiles, startIndex: index);
+
+    // Explicitly update the notification with the current MediaItem
+    if (handler._queue.isNotEmpty) {
+      final item = handler._queue[handler._currentIndex];
+      handler.mediaItem.add(item);
+      await BaseAudioHandler().playMediaItem(item);
     }
+
+    await _audioHandler.play();
+    setState(() {});
   }
 
   Future<void> _playNext() async {
+    await _audioHandler.skipToNext();
     if (_currentPlayingIndex != null &&
         _currentPlayingIndex! < _musicFiles.length - 1) {
-      await _playMusic(_currentPlayingIndex! + 1);
+      _currentPlayingIndex = _currentPlayingIndex! + 1;
     }
+    setState(() {});
   }
 
   Future<void> _playPrevious() async {
+    await _audioHandler.skipToPrevious();
     if (_currentPlayingIndex != null && _currentPlayingIndex! > 0) {
-      await _playMusic(_currentPlayingIndex! - 1);
+      _currentPlayingIndex = _currentPlayingIndex! - 1;
     }
+    setState(() {});
   }
 
   Future<void> _stopMusic() async {
-    await _audioPlayer.stop();
+    await _audioHandler.stop();
     setState(() {
       _isPlaying = false;
       _position = Duration.zero;
@@ -309,7 +472,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   }
 
   void _seekTo(double ms) {
-    _audioPlayer.seek(Duration(milliseconds: ms.toInt()));
+    _audioHandler.seek(Duration(milliseconds: ms.toInt()));
   }
 
   String _formatDuration(Duration d) {
@@ -321,7 +484,6 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   void _showError(String msg) => ScaffoldMessenger.of(
     context,
   ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-
   void _showMessage(String msg) => ScaffoldMessenger.of(
     context,
   ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.green));
@@ -375,9 +537,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            onPressed: () {
-              _startSafeAutoScan();
-            },
+            onPressed: _startSafeAutoScan,
           ),
           IconButton(
             icon: const Icon(Icons.brightness_6),
@@ -450,10 +610,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   Widget _buildAlbumsTab() {
     final grouped = _groupByAlbum();
     if (grouped.isEmpty) return const Center(child: Text('No albums'));
-
     final entries =
         grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-
     return ListView.builder(
       itemCount: entries.length,
       itemBuilder: (_, i) {
@@ -496,10 +654,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
   Widget _buildArtistsTab() {
     final grouped = _groupByArtist();
     if (grouped.isEmpty) return const Center(child: Text('No artists'));
-
     final entries =
         grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-
     return ListView.builder(
       itemCount: entries.length,
       itemBuilder: (_, i) {
@@ -619,7 +775,11 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen>
               IconButton(
                 iconSize: 48,
                 icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle),
-                onPressed: () => _playMusic(_currentPlayingIndex!),
+                onPressed: () {
+                  if (_currentPlayingIndex != null) {
+                    _playMusic(_currentPlayingIndex!);
+                  }
+                },
                 color: Colors.white,
               ),
               IconButton(
