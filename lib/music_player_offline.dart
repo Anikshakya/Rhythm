@@ -6,8 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rhythm/audio_meta_data/audio_meta_data.dart';
+
+late AudioHandler audioHandler;
 
 /// A simple data class for your songs
 class SongInfo {
@@ -16,9 +19,6 @@ class SongInfo {
   SongInfo({required this.file, required this.meta});
 }
 
-/// Entry point for the background audio task
-/// (Not needed with AudioHandler-based API, safe to remove)
-
 /// The AudioHandler handling background playback / notification controls
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   final _player = AudioPlayer();
@@ -26,64 +26,95 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   int _currentIndex = 0;
 
   MyAudioHandler() {
-    _notifyAudioSession();
     _player.playbackEventStream.listen(_broadcastState);
     _player.durationStream.listen((duration) {
-      if (duration != null && _queue.isNotEmpty) {
+      if (duration != null &&
+          _queue.isNotEmpty &&
+          _currentIndex < _queue.length) {
         final item = _queue[_currentIndex];
-        final newItem = item.copyWith(duration: duration);
-        _queue[_currentIndex] = newItem;
-        mediaItem.add(newItem);
-        BaseAudioHandler().playMediaItem(newItem);
-        BaseAudioHandler().updateQueue(_queue);
+        // Only update if duration is null or has changed
+        if (item.duration == null || item.duration != duration) {
+          final newItem = item.copyWith(duration: duration);
+          _queue[_currentIndex] = newItem;
+          mediaItem.add(newItem);
+          // We don't need playMediaItem or updateQueue here,
+          // as mediaItem.add handles broadcasting the updated item.
+        }
       }
     });
   }
 
-  Future<void> _notifyAudioSession() async {
-    // final session = await AudioSession.instance;
-    // await session.configure(AudioSessionConfiguration.music());
+  Future<void> _loadQueue(List<SongInfo> songs, {int startIndex = 0}) async {
+    _queue = await Future.wait(
+      songs.map((song) async {
+        // Await the file path URI for the album art
+        final artUri = await _writeAlbumArtToFile(song.meta.albumArt);
+
+        return MediaItem(
+          id: song.file.path,
+          album: song.meta.album ?? '',
+          title: song.meta.title ?? song.file.path.split('/').last,
+          artist: song.meta.artist ?? '',
+          duration: null,
+          artUri: artUri, // Use the file URI here
+        );
+      }),
+    );
+
+    audioHandler.updateQueue(_queue);
+    _currentIndex = startIndex;
+
+    await _player.setAudioSources(
+      _queue
+          .map((item) => AudioSource.uri(Uri.file(item.id), tag: item))
+          .toList(),
+      initialIndex: startIndex,
+    );
+
+    mediaItem.add(_queue[startIndex]);
   }
 
-  Future<void> _loadQueue(List<SongInfo> songs, {int startIndex = 0}) async {
-    _queue =
-        songs.map((song) {
-          return MediaItem(
-            id: song.file.path,
-            album: song.meta.album ?? '',
-            title: song.meta.title ?? song.file.path.split('/').last,
-            artist: song.meta.artist ?? '',
-            duration: null, // will update when available
-            artUri:
-                song.meta.albumArt != null
-                    ? Uri.dataFromBytes(
-                      song.meta.albumArt!,
-                      mimeType: 'image/jpeg',
-                    )
-                    : null,
-          );
-        }).toList();
-    // AudioServiceBackground.setQueue(_queue);
-    BaseAudioHandler().updateQueue(_queue);
-    _currentIndex = startIndex;
-    await _player.setAudioSource(
-      ConcatenatingAudioSource(
-        children:
-            _queue.map((item) => AudioSource.uri(Uri.file(item.id))).toList(),
-      ),
-      initialIndex: _currentIndex,
-    );
-    mediaItem.add(_queue[_currentIndex]);
+  // 1. Helper function to write bytes to a temp file
+  Future<Uri?> _writeAlbumArtToFile(Uint8List? albumArtBytes) async {
+    if (albumArtBytes == null) return null;
+
+    try {
+      // Get the directory where temporary files can be stored
+      final tempDir = await getTemporaryDirectory();
+
+      // Create a unique file name
+      final fileName = 'album_art_${DateTime.now().microsecondsSinceEpoch}.jpg';
+      final file = File('${tempDir.path}/$fileName');
+
+      // Write the bytes to the file
+      await file.writeAsBytes(albumArtBytes);
+
+      // Return the file URI (Uri.file) which the notification can handle
+      return Uri.file(file.path);
+    } catch (e) {
+      print('Error writing album art to file: $e');
+      return null;
+    }
   }
 
   void _broadcastState(PlaybackEvent event) {
     final playing = _player.playing;
+
+    // --- START: Seek Action Addition ---
     final controls = [
       MediaControl.skipToPrevious,
       if (playing) MediaControl.pause else MediaControl.play,
       MediaControl.skipToNext,
       MediaControl.stop,
     ];
+
+    final systemActions = const {
+      MediaAction.seek, // <--- **ADDED SEEK ACTION HERE**
+      MediaAction.seekForward,
+      MediaAction.seekBackward,
+    };
+    // --- END: Seek Action Addition ---
+
     final mediaItem_ =
         (_queue.isNotEmpty && _currentIndex < _queue.length)
             ? _queue[_currentIndex]
@@ -92,6 +123,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     playbackState.add(
       PlaybackState(
         controls: controls,
+        systemActions: systemActions, // Use the systemActions set
         androidCompactActionIndices: const [0, 1, 2],
         processingState:
             {
@@ -126,6 +158,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     await super.stop();
   }
 
+  // The seek handler method is already implemented and correct!
   @override
   Future<void> seek(Duration position) => _player.seek(position);
 
@@ -153,7 +186,6 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 }
 
 /// ==================== MAIN APP ====================
-late AudioHandler audioHandler;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -418,32 +450,32 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
 
   // ==================== PLAYBACK CONTROLS ====================
   Future<void> _playMusic(int index) async {
+    final handler = _audioHandler as MyAudioHandler;
+
     if (_currentPlayingIndex == index) {
       if (_isPlaying) {
         await _audioHandler.pause();
-        setState(() {});
       } else {
         await _audioHandler.play();
-        setState(() {});
       }
       return;
     }
 
     _currentPlayingIndex = index;
 
-    // Load queue & update mediaItem
-    final handler = _audioHandler as MyAudioHandler;
+    // Load queue & start from this index
     await handler.loadSongs(_musicFiles, startIndex: index);
 
     // Explicitly update the notification with the current MediaItem
     if (handler._queue.isNotEmpty) {
       final item = handler._queue[handler._currentIndex];
       handler.mediaItem.add(item);
-      await BaseAudioHandler().playMediaItem(item);
     }
 
+    // Just start playback
     await _audioHandler.play();
-    setState(() {});
+
+    setState(() {}); // Optional: UI may already update from mediaItem stream
   }
 
   Future<void> _playNext() async {
