@@ -237,7 +237,6 @@ class MusicPlayerScreen extends StatefulWidget {
 
 class MusicPlayerScreenState extends State<MusicPlayerScreen>
     with SingleTickerProviderStateMixin {
-  late final AudioHandler _audioHandler;
   bool isDarkMode = true;
 
   List<SongInfo> _musicFiles = [];
@@ -267,7 +266,6 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
   @override
   void initState() {
     super.initState();
-    _audioHandler = audioHandler;
     _tabController = TabController(length: 3, vsync: this);
     _initializeApp();
     _startSafeAutoScan();
@@ -287,12 +285,13 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
 
   /// Setup listener for background handler
   void _listenToPlaybackState() {
-    _audioHandler.playbackState.listen((state) {
+    audioHandler.playbackState.listen((state) {
       setState(() {
         _isPlaying = state.playing;
       });
     });
-    _audioHandler.mediaItem.listen((item) {
+
+    audioHandler.mediaItem.listen((item) {
       if (item != null) {
         setState(() {
           _duration = item.duration ?? Duration.zero;
@@ -302,6 +301,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
         });
       }
     });
+
     AudioService.position.listen((pos) {
       setState(() {
         _position = pos;
@@ -450,13 +450,13 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
 
   // ==================== PLAYBACK CONTROLS ====================
   Future<void> _playMusic(int index) async {
-    final handler = _audioHandler as MyAudioHandler;
+    final handler = audioHandler as MyAudioHandler;
 
     if (_currentPlayingIndex == index) {
       if (_isPlaying) {
-        await _audioHandler.pause();
+        await audioHandler.pause();
       } else {
-        await _audioHandler.play();
+        await audioHandler.play();
       }
       return;
     }
@@ -473,13 +473,13 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
     }
 
     // Just start playback
-    await _audioHandler.play();
+    await audioHandler.play();
 
     setState(() {}); // Optional: UI may already update from mediaItem stream
   }
 
   Future<void> _playNext() async {
-    await _audioHandler.skipToNext();
+    await audioHandler.skipToNext();
     if (_currentPlayingIndex != null &&
         _currentPlayingIndex! < _musicFiles.length - 1) {
       _currentPlayingIndex = _currentPlayingIndex! + 1;
@@ -488,7 +488,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
   }
 
   Future<void> _playPrevious() async {
-    await _audioHandler.skipToPrevious();
+    await audioHandler.skipToPrevious();
     if (_currentPlayingIndex != null && _currentPlayingIndex! > 0) {
       _currentPlayingIndex = _currentPlayingIndex! - 1;
     }
@@ -496,7 +496,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
   }
 
   Future<void> _stopMusic() async {
-    await _audioHandler.stop();
+    await audioHandler.stop();
     setState(() {
       _isPlaying = false;
       _position = Duration.zero;
@@ -504,7 +504,7 @@ class MusicPlayerScreenState extends State<MusicPlayerScreen>
   }
 
   void _seekTo(double ms) {
-    _audioHandler.seek(Duration(milliseconds: ms.toInt()));
+    audioHandler.seek(Duration(milliseconds: ms.toInt()));
   }
 
   String _formatDuration(Duration d) {
