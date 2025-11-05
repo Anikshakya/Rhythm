@@ -3,7 +3,6 @@ import 'dart:math';
 import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:rhythm/audio_meta_data/audio_meta_data.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -11,6 +10,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
+import 'dart:typed_data';
 
 // =======================================================
 // Global Audio Handler Setup
@@ -33,11 +34,6 @@ Future<void> main() async {
 // =======================================================
 // Placeholder Models for Local Scanning
 // =======================================================
-class SongInfo {
-  final File file;
-  final AudioMetadata meta;
-  SongInfo({required this.file, required this.meta});
-}
 
 // =======================================================
 // Audio Handler (The core business logic with the full fix)
@@ -94,9 +90,6 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
         mediaItem.add(currentQueue[index]);
       }
     });
-
-    // Load the default online track initially
-    playOnlineDefault();
   }
 
   // Expose a method to switch to the default online stream
@@ -265,13 +258,13 @@ class MainScreen extends StatefulWidget {
   _MainScreenState createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final LocalMusicScanner _scanner = LocalMusicScanner();
   List<SongInfo> _musicFiles = [];
   bool _isScanning = false;
   String? _message;
   String? _currentId;
-  StreamSubscription<MediaItem?>? mediaItemSubscription;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
 
   static final List<MediaItem> _onlineItems = [
     MediaItem(
@@ -301,61 +294,87 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
+    WidgetsBinding.instance.addObserver(this);
+    _mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
+      _saveCurrentState();
       setState(() {
         _currentId = item?.id;
       });
     });
+    _audioHandler.queue.listen((_) {
+      _saveCurrentState();
+    });
     _loadSavedSongs();
+    _loadLastState();
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _saveCurrentState();
+    }
   }
 
   Future<void> _loadSavedSongs() async {
     final prefs = await SharedPreferences.getInstance();
     final savedSongsJson = prefs.getString('saved_songs');
-    if (savedSongsJson != null) {
-      final List<dynamic> savedSongsList = json.decode(savedSongsJson);
+    if (savedSongsJson == null) {
+      setState(() {
+        _musicFiles = [];
+        _message = 'No saved songs found. Scan to find songs.';
+      });
+      return;
+    }
+
+    try {
+      final savedList = json.decode(savedSongsJson) as List;
       final loadedSongs = <SongInfo>[];
-      for (var songMap in savedSongsList) {
-        final path = songMap['path'];
-        final file = File(path);
-        if (await file.exists()) {
-          final meta = AudioMetadata(
-            title: songMap['title'],
-            artist: songMap['artist'],
-            album: songMap['album'],
-            // albumArt: songMap['albumArt'],
-          );
-          loadedSongs.add(SongInfo(file: file, meta: meta));
+
+      for (final map in savedList) {
+        if (map is Map<String, dynamic>) {
+          final song = await SongInfo.fromJson(map);
+          if (song != null) loadedSongs.add(song);
+        } else if (map is Map) {
+          final song = await SongInfo.fromJson(Map<String, dynamic>.from(map));
+          if (song != null) loadedSongs.add(song);
         }
       }
-      if (loadedSongs.isNotEmpty) {
-        setState(() {
-          _musicFiles = loadedSongs;
-          _message = 'Loaded ${loadedSongs.length} saved songs.';
-        });
-        return;
-      }
+
+      setState(() {
+        _musicFiles = loadedSongs;
+        _message = 'Loaded ${loadedSongs.length} saved songs.';
+      });
+    } catch (e) {
+      debugPrint('Error loading saved songs: $e');
+      setState(() {
+        _musicFiles = [];
+        _message = 'Failed to load saved songs.';
+      });
     }
-    // If no saved songs or failed to load, set empty
-    setState(() {
-      _musicFiles = [];
-      _message = 'No saved songs found. Scan to find songs.';
-    });
   }
 
   Future<void> _saveSongs() async {
     final prefs = await SharedPreferences.getInstance();
-    final songsList =
-        _musicFiles.map((song) {
-          return {
-            'path': song.file.path,
-            'title': song.meta.title,
-            'artist': song.meta.artist,
-            'album': song.meta.album,
-            // 'albumArt': song.meta.albumArt,
-          };
-        }).toList();
-    await prefs.setString('saved_songs', json.encode(songsList));
+    final appDir = await getApplicationDocumentsDirectory();
+
+    // Ensure a folder exists for album arts
+    final artDir = Directory('${appDir.path}/album_arts');
+    if (!await artDir.exists()) {
+      await artDir.create(recursive: true);
+    }
+
+    // ✅ Convert all SongInfo objects to JSON-safe maps
+    final musicLists = _musicFiles.map((item) => item.toJson()).toList();
+
+    await prefs.setString('saved_songs', json.encode(musicLists));
+    debugPrint('🎵 Saved ${musicLists.length} songs with album arts.');
   }
 
   Future<void> _startScan() async {
@@ -387,6 +406,100 @@ class _MainScreenState extends State<MainScreen> {
         _message = 'Scan failed: $e';
       });
     }
+  }
+
+  Future<void> _selectAndScanFolder() async {
+    final String? directoryPath = await FilePicker.platform.getDirectoryPath();
+    if (directoryPath == null) {
+      return;
+    }
+    setState(() {
+      _isScanning = true;
+      _musicFiles = [];
+      _message = 'Requesting permissions...';
+    });
+    final granted = await _scanner.requestPermission();
+    if (!granted) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Storage permission denied. Cannot scan selected folder.';
+      });
+      return;
+    }
+    setState(() => _message = 'Scanning selected folder...');
+    try {
+      final foundSongs = await _scanner.scanDirectory(directoryPath);
+      setState(() {
+        _musicFiles = foundSongs;
+        _isScanning = false;
+        _message = 'Found ${foundSongs.length} songs in selected folder.';
+      });
+      await _saveSongs();
+    } catch (e) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Scan failed: $e';
+      });
+    }
+  }
+
+  Future<void> _loadLastState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastQueueJson = prefs.getString('last_queue');
+    if (lastQueueJson != null) {
+      final lastQueueList = json.decode(lastQueueJson) as List;
+      final items = <MediaItem>[];
+      final sources = <AudioSource>[];
+      for (var map in lastQueueList) {
+        final id = map['id'];
+        final item = MediaItem(
+          id: id,
+          title: map['title'] ?? 'Unknown Title',
+          artist: map['artist'],
+          album: map['album'],
+          duration: Duration(milliseconds: map['duration'] ?? 0),
+          artUri: map['artUri'] != null ? Uri.parse(map['artUri']) : null,
+        );
+        items.add(item);
+        sources.add(AudioSource.uri(Uri.parse(id), tag: item));
+      }
+      if (items.isNotEmpty) {
+        final lastIndex = prefs.getInt('last_index') ?? 0;
+        final lastPosition = Duration(
+          milliseconds: prefs.getInt('last_position') ?? 0,
+        );
+        await (_audioHandler as AudioPlayerHandler).loadPlaylist(
+          items,
+          sources,
+          initialIndex: lastIndex,
+        );
+        await _audioHandler.pause();
+        await _audioHandler.seek(lastPosition);
+      }
+    }
+  }
+
+  Future<void> _saveCurrentState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentQueue = _audioHandler.queue.value;
+    if (currentQueue.isEmpty) return;
+    final queueList =
+        currentQueue.map((item) {
+          return {
+            'id': item.id,
+            'title': item.title,
+            'artist': item.artist,
+            'album': item.album,
+            'duration': item.duration?.inMilliseconds,
+            'artUri': item.artUri?.toString(),
+          };
+        }).toList();
+    await prefs.setString('last_queue', json.encode(queueList));
+    await prefs.setInt(
+      'last_index',
+      _audioHandler.playbackState.value.queueIndex ?? 0,
+    );
+    await prefs.setInt('last_position', 0);
   }
 
   void _playLocalSongs(List<SongInfo> playlist, int index) {
@@ -523,10 +636,13 @@ class _MainScreenState extends State<MainScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // --- Current Media Item Display ---
+            // --- Player UI ---
             StreamBuilder<MediaItem?>(
               stream: _audioHandler.mediaItem,
               builder: (context, snapshot) {
+                if (snapshot.data == null) {
+                  return const Text('No track selected');
+                }
                 final mediaItem = snapshot.data;
                 Widget? artWidget;
                 if (mediaItem?.artUri != null) {
@@ -572,73 +688,84 @@ class _MainScreenState extends State<MainScreen> {
                       textAlign: TextAlign.center,
                     ),
                     Text(mediaItem?.artist ?? ''),
+                    const SizedBox(height: 20),
+                    // --- Control Buttons ---
+                    StreamBuilder<List<MediaItem>?>(
+                      stream: _audioHandler.queue,
+                      builder: (context, queueSnapshot) {
+                        final queue = queueSnapshot.data ?? [];
+                        return StreamBuilder<PlaybackState>(
+                          stream: _audioHandler.playbackState,
+                          builder: (context, playbackSnapshot) {
+                            final playing =
+                                playbackSnapshot.data?.playing ?? false;
+                            final queueIndex =
+                                playbackSnapshot.data?.queueIndex ?? 0;
+                            final hasPrevious = queueIndex > 0;
+                            final hasNext = queueIndex < queue.length - 1;
+                            return Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _button(
+                                  Icons.skip_previous,
+                                  hasPrevious
+                                      ? _audioHandler.skipToPrevious
+                                      : null,
+                                ),
+                                _button(
+                                  Icons.fast_rewind,
+                                  _audioHandler.rewind,
+                                ),
+                                if (playing)
+                                  _button(Icons.pause, _audioHandler.pause)
+                                else
+                                  _button(Icons.play_arrow, _audioHandler.play),
+                                _button(Icons.stop, _audioHandler.stop),
+                                _button(
+                                  Icons.fast_forward,
+                                  _audioHandler.fastForward,
+                                ),
+                                _button(
+                                  Icons.skip_next,
+                                  hasNext ? _audioHandler.skipToNext : null,
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                      },
+                    ),
+                    // --- Seek Bar (Relies on MediaState) ---
+                    StreamBuilder<MediaState>(
+                      stream: _mediaStateStream,
+                      builder: (context, snapshot) {
+                        final mediaState = snapshot.data;
+                        return SeekBar(
+                          duration:
+                              mediaState?.mediaItem?.duration ?? Duration.zero,
+                          position: mediaState?.position ?? Duration.zero,
+                          onChangeEnd: (newPosition) {
+                            _audioHandler.seek(newPosition);
+                          },
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    // --- Processing State Display ---
+                    StreamBuilder<AudioProcessingState>(
+                      stream:
+                          _audioHandler.playbackState
+                              .map((state) => state.processingState)
+                              .distinct(),
+                      builder: (context, snapshot) {
+                        final processingState =
+                            snapshot.data ?? AudioProcessingState.idle;
+                        return Text(
+                          "Processing state: ${describeEnum(processingState)}",
+                        );
+                      },
+                    ),
                   ],
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-            // --- Control Buttons ---
-            StreamBuilder<List<MediaItem>?>(
-              stream: _audioHandler.queue,
-              builder: (context, queueSnapshot) {
-                final queue = queueSnapshot.data ?? [];
-                return StreamBuilder<PlaybackState>(
-                  stream: _audioHandler.playbackState,
-                  builder: (context, playbackSnapshot) {
-                    final playing = playbackSnapshot.data?.playing ?? false;
-                    final queueIndex = playbackSnapshot.data?.queueIndex ?? 0;
-                    final hasPrevious = queueIndex > 0;
-                    final hasNext = queueIndex < queue.length - 1;
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _button(
-                          Icons.skip_previous,
-                          hasPrevious ? _audioHandler.skipToPrevious : null,
-                        ),
-                        _button(Icons.fast_rewind, _audioHandler.rewind),
-                        if (playing)
-                          _button(Icons.pause, _audioHandler.pause)
-                        else
-                          _button(Icons.play_arrow, _audioHandler.play),
-                        _button(Icons.stop, _audioHandler.stop),
-                        _button(Icons.fast_forward, _audioHandler.fastForward),
-                        _button(
-                          Icons.skip_next,
-                          hasNext ? _audioHandler.skipToNext : null,
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
-            ),
-            // --- Seek Bar (Relies on MediaState) ---
-            StreamBuilder<MediaState>(
-              stream: _mediaStateStream,
-              builder: (context, snapshot) {
-                final mediaState = snapshot.data;
-                return SeekBar(
-                  duration: mediaState?.mediaItem?.duration ?? Duration.zero,
-                  position: mediaState?.position ?? Duration.zero,
-                  onChangeEnd: (newPosition) {
-                    _audioHandler.seek(newPosition);
-                  },
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-            // --- Processing State Display ---
-            StreamBuilder<AudioProcessingState>(
-              stream:
-                  _audioHandler.playbackState
-                      .map((state) => state.processingState)
-                      .distinct(),
-              builder: (context, snapshot) {
-                final processingState =
-                    snapshot.data ?? AudioProcessingState.idle;
-                return Text(
-                  "Processing state: ${describeEnum(processingState)}",
                 );
               },
             ),
@@ -656,6 +783,12 @@ class _MainScreenState extends State<MainScreen> {
               icon: const Icon(Icons.folder_open),
               label: const Text('Scan Local Files'),
               onPressed: _startScan,
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.folder_special),
+              label: const Text('Select Folder and Scan'),
+              onPressed: _selectAndScanFolder,
             ),
             const SizedBox(height: 20),
             // --- Music Section ---
@@ -784,6 +917,20 @@ class LocalMusicScanner {
         final meta = await AudioMetadata.fromFile(file);
         if (meta != null) found.add(SongInfo(file: file, meta: meta));
       }
+    }
+    final unique = _removeDuplicates(found)
+      ..sort((a, b) => a.file.path.compareTo(b.file.path));
+    return unique;
+  }
+
+  Future<List<SongInfo>> scanDirectory(String path) async {
+    _scannedFiles = 0;
+    final dir = Directory(path);
+    final files = await _scanDirectoryForMusic(dir);
+    final found = <SongInfo>[];
+    for (final file in files) {
+      final meta = await AudioMetadata.fromFile(file);
+      if (meta != null) found.add(SongInfo(file: file, meta: meta));
     }
     final unique = _removeDuplicates(found)
       ..sort((a, b) => a.file.path.compareTo(b.file.path));
@@ -984,4 +1131,413 @@ class HiddenThumbComponentShape extends SliderComponentShape {
     required double textScaleFactor,
     required Size sizeWithOverflow,
   }) {}
+}
+
+
+
+
+
+class SongInfo {
+  final File file;
+  final AudioMetadata meta;
+  SongInfo({required this.file, required this.meta});
+
+  MediaItem toMediaItem(String id) {
+    return MediaItem(
+      id: id,
+      album: meta.album,
+      title: meta.title,
+      artist: meta.artist,
+      genre: meta.genre,
+      duration:
+          meta.durationMs != null
+              ? Duration(milliseconds: meta.durationMs!)
+              : null,
+      artUri: meta.artUri,
+      extras: {'filePath': file.path},
+    );
+  }
+
+  /// Convert SongInfo -> Map (serializable)
+  Map<String, dynamic> toJson() {
+    return {
+      'filePath': file.path,
+      'title': meta.title,
+      'artist': meta.artist,
+      'album': meta.album,
+      'genre': meta.genre,
+      'durationMs': meta.durationMs,
+      'artUri': meta.artUri?.toString(),
+    };
+  }
+
+  /// Reconstruct SongInfo from Map (returns null if file missing)
+  static Future<SongInfo?> fromJson(Map<String, dynamic> map) async {
+    final filePath = map['filePath'] as String?;
+    if (filePath == null) return null;
+
+    final file = File(filePath);
+    if (!await file.exists()) return null;
+
+    // Try to re-read metadata from file if you want; here we create a fallback meta
+    final meta = AudioMetadata(
+      id: file.path,
+      title: map['title'] ?? 'Unknown',
+      artist: map['artist'] ?? 'Unknown Artist',
+      album: map['album'] ?? 'Unknown Album',
+      genre: map['genre'],
+      durationMs:
+          map['durationMs'] is int
+              ? map['durationMs'] as int
+              : (map['durationMs'] is String
+                  ? int.tryParse(map['durationMs'])
+                  : null),
+      albumArt: null,
+      artUri: map['artUri'] != null ? Uri.tryParse(map['artUri']) : null,
+    );
+
+    return SongInfo(file: file, meta: meta);
+  }
+}
+
+/// ==================== AUDIO METADATA EXTRACTOR ====================
+class AudioMetadata {
+  String? id;
+  String title;
+  String artist;
+  String album;
+  String? genre;
+  int? durationMs;
+  Uint8List? albumArt;
+  Uri? artUri;
+
+  AudioMetadata({
+    this.id,
+    this.artUri,
+    this.title = "Unknown Title",
+    this.artist = "Unknown Artist",
+    this.album = "Unknown Album",
+    this.genre,
+    this.durationMs,
+    this.albumArt,
+  });
+
+  /// Extract metadata from file based on extension
+  static Future<AudioMetadata?> fromFile(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final ext = file.path.split('.').last.toLowerCase();
+
+      switch (ext) {
+        case 'mp3':
+          return _readMp3(bytes, file);
+        case 'wav':
+          return _readWav(file);
+        case 'flac':
+          return await _readFlac(file);
+        case 'm4a':
+        case 'mp4':
+        case 'aac':
+          return _readM4a(bytes, file);
+        default:
+          return AudioMetadata(title: file.path.split('/').last);
+      }
+    } catch (e) {
+      debugPrint('Metadata extraction failed: $e');
+      return AudioMetadata(title: file.path.split('/').last);
+    }
+  }
+
+  // ------------------- MP3 METADATA -------------------
+  static AudioMetadata _readMp3(Uint8List bytes, File file) {
+    final meta = AudioMetadata();
+    meta.title = 'MP3 Audio';
+
+    // Check ID3 tag
+    if (bytes.length > 10 &&
+        String.fromCharCodes(bytes.sublist(0, 3)) == 'ID3') {
+      final headerSize = 10;
+      final tagSize = _syncSafeToInt(bytes.sublist(6, 10));
+      var pos = headerSize;
+
+      while (pos + 10 < tagSize + headerSize && pos + 10 < bytes.length) {
+        final frameId = ascii.decode(bytes.sublist(pos, pos + 4));
+        final frameSize = _bytesToInt(bytes.sublist(pos + 4, pos + 8));
+        if (frameSize <= 0 || pos + 10 + frameSize > bytes.length) break;
+
+        final frameData = bytes.sublist(pos + 10, pos + 10 + frameSize);
+
+        switch (frameId) {
+          case 'TIT2':
+            meta.title = _decodeTextFrame(frameData);
+            break;
+          case 'TPE1':
+            meta.artist = _decodeTextFrame(frameData);
+            break;
+          case 'TALB':
+            meta.album = _decodeTextFrame(frameData);
+            break;
+          case 'TCON':
+            meta.genre = _decodeTextFrame(frameData);
+            break;
+          case 'APIC':
+            meta.albumArt = _decodeApic(frameData);
+            break;
+        }
+        pos += 10 + frameSize;
+      }
+    }
+
+    meta.durationMs = _estimateMp3Duration(bytes);
+    return meta;
+  }
+
+  static int _syncSafeToInt(List<int> bytes) =>
+      (bytes[0] << 21) | (bytes[1] << 14) | (bytes[2] << 7) | bytes[3];
+
+  static int _bytesToInt(List<int> bytes) =>
+      bytes.fold(0, (a, b) => (a << 8) + b);
+
+  static String _decodeTextFrame(Uint8List data) {
+    if (data.isEmpty) return '';
+    final encoding = data[0];
+    final textBytes = data.sublist(1);
+    try {
+      return encoding == 0
+          ? ascii.decode(textBytes).trim()
+          : utf8.decode(textBytes).trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Uint8List? _decodeApic(Uint8List data) {
+    try {
+      var i = 1;
+      while (i < data.length && data[i] != 0) i++;
+      i += 2; // skip null + picture type
+      while (i < data.length && data[i] != 0) i++;
+      i++;
+      return data.sublist(i);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static int _estimateMp3Duration(Uint8List bytes) {
+    const bitrate = 128000; // 128 kbps fallback
+    return ((bytes.length * 8) / bitrate * 1000).toInt();
+  }
+
+  // ------------------- WAV METADATA -------------------
+  static AudioMetadata _readWav(File file) {
+    return AudioMetadata(title: file.path.split('/').last);
+  }
+
+  // ------------------- FLAC METADATA -------------------
+  /// -------------------- FLAC --------------------
+
+  static Future<AudioMetadata> _readFlac(File file) async {
+    final meta = AudioMetadata(title: 'FLAC Audio');
+
+    try {
+      final bytes = await file.readAsBytes();
+
+      // ✅ Check FLAC file signature
+      if (utf8.decode(bytes.sublist(0, 4)) != "fLaC") {
+        print("❌ Not a valid FLAC file");
+        return meta;
+      }
+
+      int offset = 4;
+      bool isLast = false;
+
+      while (!isLast && offset < bytes.length) {
+        final header = bytes[offset];
+        isLast = (header & 0x80) != 0; // Last-metadata-block flag
+        final type = header & 0x7F; // Block type
+        final length =
+            (bytes[offset + 1] << 16) |
+            (bytes[offset + 2] << 8) |
+            bytes[offset + 3];
+        offset += 4;
+
+        final blockData = bytes.sublist(offset, offset + length);
+
+        switch (type) {
+          case 0: // STREAMINFO
+            final duration = _parseStreamInfo(blockData);
+            if (duration != null) meta.durationMs = duration;
+            break;
+          case 4: // VORBIS_COMMENT
+            _parseVorbisComments(blockData, meta);
+            break;
+          case 6: // PICTURE (Album art)
+            final imageBytes = _parsePicture(blockData);
+            if (imageBytes != null) meta.albumArt = imageBytes;
+            break;
+        }
+
+        offset += length;
+      }
+    } catch (e) {
+      print('❌ Error reading FLAC: $e');
+    }
+
+    return meta;
+  }
+
+  /// --- STREAMINFO (duration) ---
+  static int? _parseStreamInfo(Uint8List data) {
+    if (data.length < 34) return null;
+
+    final totalSamples =
+        ((data[27] & 0x0F) << 32) |
+        (data[28] << 24) |
+        (data[29] << 16) |
+        (data[30] << 8) |
+        data[31];
+    final sampleRate =
+        ((data[18] << 12) | (data[19] << 4) | ((data[20] & 0xF0) >> 4));
+
+    if (sampleRate == 0) return null;
+
+    final durationSeconds = totalSamples / sampleRate;
+    return (durationSeconds * 1000).round();
+  }
+
+  /// --- VORBIS COMMENTS (title, artist, etc.) ---
+  static void _parseVorbisComments(Uint8List data, AudioMetadata meta) {
+    final reader = ByteData.sublistView(data);
+    int offset = 0;
+
+    try {
+      // Skip vendor string
+      final vendorLength = reader.getUint32(offset, Endian.little);
+      offset += 4 + vendorLength;
+
+      // Number of comments
+      final commentsCount = reader.getUint32(offset, Endian.little);
+      offset += 4;
+
+      for (int i = 0; i < commentsCount; i++) {
+        final len = reader.getUint32(offset, Endian.little);
+        offset += 4;
+        final commentBytes = data.sublist(offset, offset + len);
+        offset += len;
+
+        final comment = utf8.decode(commentBytes);
+        final parts = comment.split('=');
+        if (parts.length == 2) {
+          final key = parts[0].toUpperCase();
+          final value = parts[1];
+          switch (key) {
+            case 'TITLE':
+              meta.title = value;
+              break;
+            case 'ARTIST':
+              meta.artist = value;
+              break;
+            case 'ALBUM':
+              meta.album = value;
+              break;
+            case 'GENRE':
+              meta.genre = value;
+              break;
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Failed to parse Vorbis comments: $e');
+    }
+  }
+
+  /// --- PICTURE BLOCK (album art) ---
+  static Uint8List? _parsePicture(Uint8List data) {
+    final reader = ByteData.sublistView(data);
+    int offset = 0;
+
+    try {
+      offset += 4;
+
+      // MIME type
+      final mimeLength = reader.getUint32(offset);
+      offset += 4;
+      final mime = utf8.decode(data.sublist(offset, offset + mimeLength));
+      offset += mimeLength;
+
+      // Description
+      final descLength = reader.getUint32(offset);
+      offset += 4;
+      offset += descLength;
+
+      // Skip width, height, color depth, indexed colors
+      offset += 16;
+
+      // Image data length
+      final imgDataLength = reader.getUint32(offset);
+      offset += 4;
+
+      // Image bytes
+      final imgBytes = data.sublist(offset, offset + imgDataLength);
+
+      print("✅ FLAC album art extracted (${mime}, ${imgBytes.length} bytes)");
+      return Uint8List.fromList(imgBytes);
+    } catch (e) {
+      print('⚠️ Failed to parse FLAC picture: $e');
+      return null;
+    }
+  }
+
+  // ------------------- M4A METADATA -------------------
+  static AudioMetadata _readM4a(Uint8List bytes, File file) {
+    final meta = AudioMetadata();
+    int pos = 0;
+
+    while (pos + 8 < bytes.length) {
+      final size = _bytesToInt(bytes.sublist(pos, pos + 4));
+      final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
+      if (size < 8 || pos + size > bytes.length) break;
+
+      if (type == 'moov' || type == 'udta' || type == 'meta') {
+        int end = pos + size;
+        pos += 8;
+        while (pos + 8 < end) {
+          final childSize = _bytesToInt(bytes.sublist(pos, pos + 4));
+          final childType = String.fromCharCodes(
+            bytes.sublist(pos + 4, pos + 8),
+          );
+          if (childSize < 8 || pos + childSize > end) break;
+
+          final dataStart = pos + 8;
+          final dataEnd = pos + childSize;
+          final atomData = bytes.sublist(dataStart, dataEnd);
+
+          switch (childType) {
+            case '©nam':
+              meta.title = _readAtomString(atomData);
+              break;
+            case '©ART':
+              meta.artist = _readAtomString(atomData);
+              break;
+            case '©alb':
+              meta.album = _readAtomString(atomData);
+              break;
+            case '©gen':
+              meta.genre = _readAtomString(atomData);
+              break;
+          }
+          pos += childSize;
+        }
+        continue;
+      }
+      pos += size;
+    }
+    return meta;
+  }
+
+  static String _readAtomString(Uint8List data) {
+    if (data.length <= 8) return '';
+    return utf8.decode(data.sublist(8)).trim();
+  }
 }
