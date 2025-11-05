@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:rhythm/audio_meta_data/audio_meta_data.dart';
@@ -10,6 +9,8 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 // =======================================================
 // Global Audio Handler Setup
@@ -67,7 +68,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
     _player.durationStream.listen((duration) {
       if (duration == null) return;
       final index = _player.currentIndex ?? 0;
-      final currentQueue = queue.value ?? [];
+      final currentQueue = queue.value;
       if (index >= currentQueue.length) return;
       final oldItem = currentQueue[index];
       if (oldItem.duration != duration && duration > Duration.zero) {
@@ -87,8 +88,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
     // 4. Update mediaItem when the current index changes (for playlists)
     _player.sequenceStateStream.listen((state) {
-      final index = state?.currentIndex ?? 0;
-      final currentQueue = queue.value ?? [];
+      final index = state.currentIndex ?? 0;
+      final currentQueue = queue.value;
       if (index < currentQueue.length) {
         mediaItem.add(currentQueue[index]);
       }
@@ -134,6 +135,15 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
       items.add(localItem);
       sources.add(AudioSource.uri(localUri, tag: localItem));
     }
+    await loadPlaylist(items, sources, initialIndex: startIndex);
+  }
+
+  // New method to handle playing a list of online items
+  Future<void> playOnlinePlaylist(List<MediaItem> items, int startIndex) async {
+    final sources =
+        items
+            .map((item) => AudioSource.uri(Uri.parse(item.id), tag: item))
+            .toList();
     await loadPlaylist(items, sources, initialIndex: startIndex);
   }
 
@@ -261,22 +271,91 @@ class _MainScreenState extends State<MainScreen> {
   bool _isScanning = false;
   String? _message;
   String? _currentId;
-  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+  StreamSubscription<MediaItem?>? mediaItemSubscription;
+
+  static final List<MediaItem> _onlineItems = [
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3',
+      title: 'A Good Bass for Gambling',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3',
+      title: 'A Surprising Encounter',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Very%20Brady%20Special.mp3',
+      title: 'A Very Brady Special',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    AudioPlayerHandler._onlineItem,
+  ];
 
   @override
   void initState() {
     super.initState();
-    _mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
+    mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
       setState(() {
         _currentId = item?.id;
       });
     });
+    _loadSavedSongs();
   }
 
-  @override
-  void dispose() {
-    _mediaItemSubscription?.cancel();
-    super.dispose();
+  Future<void> _loadSavedSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedSongsJson = prefs.getString('saved_songs');
+    if (savedSongsJson != null) {
+      final List<dynamic> savedSongsList = json.decode(savedSongsJson);
+      final loadedSongs = <SongInfo>[];
+      for (var songMap in savedSongsList) {
+        final path = songMap['path'];
+        final file = File(path);
+        if (await file.exists()) {
+          final meta = AudioMetadata(
+            title: songMap['title'],
+            artist: songMap['artist'],
+            album: songMap['album'],
+            // albumArt: songMap['albumArt'],
+          );
+          loadedSongs.add(SongInfo(file: file, meta: meta));
+        }
+      }
+      if (loadedSongs.isNotEmpty) {
+        setState(() {
+          _musicFiles = loadedSongs;
+          _message = 'Loaded ${loadedSongs.length} saved songs.';
+        });
+        return;
+      }
+    }
+    // If no saved songs or failed to load, set empty
+    setState(() {
+      _musicFiles = [];
+      _message = 'No saved songs found. Scan to find songs.';
+    });
+  }
+
+  Future<void> _saveSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final songsList =
+        _musicFiles.map((song) {
+          return {
+            'path': song.file.path,
+            'title': song.meta.title,
+            'artist': song.meta.artist,
+            'album': song.meta.album,
+            // 'albumArt': song.meta.albumArt,
+          };
+        }).toList();
+    await prefs.setString('saved_songs', json.encode(songsList));
   }
 
   Future<void> _startScan() async {
@@ -301,6 +380,7 @@ class _MainScreenState extends State<MainScreen> {
         _isScanning = false;
         _message = 'Found ${foundSongs.length} songs.';
       });
+      await _saveSongs();
     } catch (e) {
       setState(() {
         _isScanning = false;
@@ -309,15 +389,22 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _playSongs(List<SongInfo> playlist, int index) {
+  void _playLocalSongs(List<SongInfo> playlist, int index) {
     (_audioHandler as AudioPlayerHandler).playLocalPlaylist(playlist, index);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Playing: ${playlist[index].meta.title}')),
     );
   }
 
-  bool _isPlaying(SongInfo song) {
-    return Uri.file(song.file.path).toString() == _currentId;
+  void _playOnlineSongs(List<MediaItem> items, int index) {
+    (_audioHandler as AudioPlayerHandler).playOnlinePlaylist(items, index);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Playing: ${items[index].title}')));
+  }
+
+  bool _isCurrent(String id) {
+    return id == _currentId;
   }
 
   Widget _buildSongsTab() {
@@ -325,15 +412,16 @@ class _MainScreenState extends State<MainScreen> {
       itemCount: _musicFiles.length,
       itemBuilder: (context, index) {
         final song = _musicFiles[index];
+        final songId = Uri.file(song.file.path).toString();
         return ListTile(
           title: Text(song.meta.title),
           subtitle: Text('${song.meta.artist} - ${song.meta.album}'),
           leading: const Icon(Icons.music_note),
           trailing:
-              _isPlaying(song)
+              _isCurrent(songId)
                   ? const Icon(Icons.volume_up, color: Colors.blue)
                   : null,
-          onTap: () => _playSongs(_musicFiles, index),
+          onTap: () => _playLocalSongs(_musicFiles, index),
         );
       },
     );
@@ -355,15 +443,16 @@ class _MainScreenState extends State<MainScreen> {
           title: Text(artist),
           children:
               songs.map((song) {
+                final songId = Uri.file(song.file.path).toString();
                 return ListTile(
                   title: Text(song.meta.title),
                   subtitle: Text(song.meta.album),
                   leading: const Icon(Icons.music_note),
                   trailing:
-                      _isPlaying(song)
+                      _isCurrent(songId)
                           ? const Icon(Icons.volume_up, color: Colors.blue)
                           : null,
-                  onTap: () => _playSongs(songs, songs.indexOf(song)),
+                  onTap: () => _playLocalSongs(songs, songs.indexOf(song)),
                 );
               }).toList(),
         );
@@ -387,17 +476,39 @@ class _MainScreenState extends State<MainScreen> {
           title: Text(album),
           children:
               songs.map((song) {
+                final songId = Uri.file(song.file.path).toString();
                 return ListTile(
                   title: Text(song.meta.title),
                   subtitle: Text(song.meta.artist),
                   leading: const Icon(Icons.music_note),
                   trailing:
-                      _isPlaying(song)
+                      _isCurrent(songId)
                           ? const Icon(Icons.volume_up, color: Colors.blue)
                           : null,
-                  onTap: () => _playSongs(songs, songs.indexOf(song)),
+                  onTap: () => _playLocalSongs(songs, songs.indexOf(song)),
                 );
               }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildOnlineTab() {
+    return ListView.builder(
+      itemCount: _onlineItems.length,
+      itemBuilder: (context, index) {
+        final item = _onlineItems[index];
+        return ListTile(
+          title: Text(item.title),
+          subtitle: Text(
+            '${item.artist ?? 'Unknown'} - ${item.album ?? 'Unknown'}',
+          ),
+          leading: const Icon(Icons.music_note),
+          trailing:
+              _isCurrent(item.id)
+                  ? const Icon(Icons.volume_up, color: Colors.blue)
+                  : null,
+          onTap: () => _playOnlineSongs(_onlineItems, index),
         );
       },
     );
@@ -547,7 +658,7 @@ class _MainScreenState extends State<MainScreen> {
               onPressed: _startScan,
             ),
             const SizedBox(height: 20),
-            // --- Local Music Section ---
+            // --- Music Section ---
             Column(
               children: [
                 Padding(
@@ -575,7 +686,7 @@ class _MainScreenState extends State<MainScreen> {
                   SizedBox(
                     height: 300,
                     child: DefaultTabController(
-                      length: 3,
+                      length: 4,
                       child: Column(
                         children: [
                           const TabBar(
@@ -583,6 +694,7 @@ class _MainScreenState extends State<MainScreen> {
                               Tab(text: 'Songs'),
                               Tab(text: 'Artists'),
                               Tab(text: 'Albums'),
+                              Tab(text: 'Online'),
                             ],
                           ),
                           Expanded(
@@ -591,6 +703,7 @@ class _MainScreenState extends State<MainScreen> {
                                 _buildSongsTab(),
                                 _buildArtistsTab(),
                                 _buildAlbumsTab(),
+                                _buildOnlineTab(),
                               ],
                             ),
                           ),
