@@ -3,8 +3,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
-/// ==================== SONG INFO HOLDER ====================
 class SongInfo {
   final File file;
   final AudioMetadata meta;
@@ -21,29 +22,71 @@ class SongInfo {
           meta.durationMs != null
               ? Duration(milliseconds: meta.durationMs!)
               : null,
-      artUri:
-          meta.albumArt != null
-              ? Uri.dataFromBytes(meta.albumArt!, mimeType: 'image/jpeg')
-              : null,
+      artUri: meta.artUri,
       extras: {'filePath': file.path},
     );
+  }
+
+  /// Convert SongInfo -> Map (serializable)
+  Map<String, dynamic> toJson() {
+    return {
+      'filePath': file.path,
+      'title': meta.title,
+      'artist': meta.artist,
+      'album': meta.album,
+      'genre': meta.genre,
+      'durationMs': meta.durationMs,
+      'artUri': meta.artUri?.toString(),
+    };
+  }
+
+  /// Reconstruct SongInfo from Map (returns null if file missing)
+  static Future<SongInfo?> fromJson(Map<String, dynamic> map) async {
+    final filePath = map['filePath'] as String?;
+    if (filePath == null) return null;
+
+    final file = File(filePath);
+    if (!await file.exists()) return null;
+
+    // Try to re-read metadata from file if you want; here we create a fallback meta
+    final meta = AudioMetadata(
+      id: file.path,
+      title: map['title'] ?? 'Unknown',
+      artist: map['artist'] ?? 'Unknown Artist',
+      album: map['album'] ?? 'Unknown Album',
+      genre: map['genre'],
+      durationMs:
+          map['durationMs'] is int
+              ? map['durationMs'] as int
+              : (map['durationMs'] is String
+                  ? int.tryParse(map['durationMs'])
+                  : null),
+      albumArt: null,
+      artUri: map['artUri'] != null ? Uri.tryParse(map['artUri']) : null,
+    );
+
+    return SongInfo(file: file, meta: meta);
   }
 }
 
 
 /// ==================== AUDIO METADATA EXTRACTOR ====================
 class AudioMetadata {
+  String? id;
   String title;
   String artist;
   String album;
   String? genre;
   int? durationMs;
   Uint8List? albumArt;
+  Uri? artUri;
 
   AudioMetadata({
-    this.title = "Unknown",
-    this.artist = 'Unknown Artist',
-    this.album = 'Unknown Album',
+    this.id,
+    this.artUri,
+    this.title = "Unknown Title",
+    this.artist = "Unknown Artist",
+    this.album = "Unknown Album",
     this.genre,
     this.durationMs,
     this.albumArt,
@@ -54,23 +97,38 @@ class AudioMetadata {
     try {
       final bytes = await file.readAsBytes();
       final ext = file.path.split('.').last.toLowerCase();
+      AudioMetadata meta;
 
       switch (ext) {
         case 'mp3':
-          return _readMp3(bytes, file);
+          meta = _readMp3(bytes, file);
+          break;
         case 'wav':
-          return _readWav(file);
+          meta = _readWav(file);
+          break;
         case 'flac':
-          return await _readFlac(file);
+          meta = await _readFlac(file);
+          break;
         case 'm4a':
         case 'mp4':
         case 'aac':
-          return _readM4a(bytes, file);
+          meta = _readM4a(bytes, file);
+          break;
         default:
-          return AudioMetadata(title: file.path.split('/').last);
+          meta = AudioMetadata(title: file.path.split('/').last);
       }
+
+      // ✅ Generate artUri if albumArt exists
+      if (meta.albumArt != null) {
+        final tempDir = await getTemporaryDirectory();
+        final artFile = File('${tempDir.path}/art_${file.path.hashCode}.jpg');
+        await artFile.writeAsBytes(meta.albumArt!);
+        meta.artUri = Uri.file(artFile.path);
+      }
+
+      return meta;
     } catch (e) {
-      print('Metadata extraction failed: $e');
+      debugPrint('Metadata extraction failed: $e');
       return AudioMetadata(title: file.path.split('/').last);
     }
   }
@@ -116,7 +174,6 @@ class AudioMetadata {
     }
 
     meta.durationMs = _estimateMp3Duration(bytes);
-    meta.title;
     return meta;
   }
 
@@ -163,8 +220,6 @@ class AudioMetadata {
   }
 
   // ------------------- FLAC METADATA -------------------
-  /// -------------------- FLAC --------------------
-
   static Future<AudioMetadata> _readFlac(File file) async {
     final meta = AudioMetadata(title: 'FLAC Audio');
 
@@ -215,7 +270,6 @@ class AudioMetadata {
     return meta;
   }
 
-  /// --- STREAMINFO (duration) ---
   static int? _parseStreamInfo(Uint8List data) {
     if (data.length < 34) return null;
 
@@ -234,7 +288,6 @@ class AudioMetadata {
     return (durationSeconds * 1000).round();
   }
 
-  /// --- VORBIS COMMENTS (title, artist, etc.) ---
   static void _parseVorbisComments(Uint8List data, AudioMetadata meta) {
     final reader = ByteData.sublistView(data);
     int offset = 0;
@@ -280,35 +333,27 @@ class AudioMetadata {
     }
   }
 
-  /// --- PICTURE BLOCK (album art) ---
   static Uint8List? _parsePicture(Uint8List data) {
     final reader = ByteData.sublistView(data);
     int offset = 0;
 
     try {
       offset += 4;
-
-      // MIME type
       final mimeLength = reader.getUint32(offset);
       offset += 4;
       final mime = utf8.decode(data.sublist(offset, offset + mimeLength));
       offset += mimeLength;
 
-      // Description
       final descLength = reader.getUint32(offset);
       offset += 4;
       offset += descLength;
 
-      // Skip width, height, color depth, indexed colors
       offset += 16;
 
-      // Image data length
       final imgDataLength = reader.getUint32(offset);
       offset += 4;
 
-      // Image bytes
       final imgBytes = data.sublist(offset, offset + imgDataLength);
-
       print("✅ FLAC album art extracted (${mime}, ${imgBytes.length} bytes)");
       return Uint8List.fromList(imgBytes);
     } catch (e) {
@@ -361,8 +406,6 @@ class AudioMetadata {
       }
       pos += size;
     }
-
-    meta.title;
     return meta;
   }
 
