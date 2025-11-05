@@ -14,7 +14,7 @@ class SongInfo {
     return MediaItem(
       id: id,
       album: meta.album,
-      title: meta.title ?? file.path.split('/').last,
+      title: meta.title,
       artist: meta.artist,
       genre: meta.genre,
       duration:
@@ -33,17 +33,17 @@ class SongInfo {
 
 /// ==================== AUDIO METADATA EXTRACTOR ====================
 class AudioMetadata {
-  String? title;
-  String? artist;
-  String? album;
+  String title;
+  String artist;
+  String album;
   String? genre;
   int? durationMs;
   Uint8List? albumArt;
 
   AudioMetadata({
-    this.title,
-    this.artist,
-    this.album,
+    this.title = "Unknown",
+    this.artist = 'Unknown Artist',
+    this.album = 'Unknown Album',
     this.genre,
     this.durationMs,
     this.albumArt,
@@ -116,7 +116,7 @@ class AudioMetadata {
     }
 
     meta.durationMs = _estimateMp3Duration(bytes);
-    meta.title ??= file.path.split('/').last;
+    meta.title;
     return meta;
   }
 
@@ -208,12 +208,6 @@ class AudioMetadata {
 
         offset += length;
       }
-
-      // Fallbacks
-      meta.artist ??= 'Unknown Artist';
-      meta.album ??= 'Unknown Album';
-      meta.genre ??= 'Unknown Genre';
-      meta.title ??= 'FLAC Audio';
     } catch (e) {
       print('❌ Error reading FLAC: $e');
     }
@@ -368,7 +362,7 @@ class AudioMetadata {
       pos += size;
     }
 
-    meta.title ??= file.path.split('/').last;
+    meta.title;
     return meta;
   }
 
