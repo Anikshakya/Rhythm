@@ -1,1772 +1,1059 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
-import 'dart:ui';
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:get/get.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:rhythm/audio_handler.dart';
-import 'package:rhythm/miniplayer/miniplayer.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'dart:io';
 import 'package:audio_service/audio_service.dart';
-import 'package:rxdart/rxdart.dart' as rx;
-void main() async {
+import 'package:flutter/material.dart';
+// Assuming these imports point to your custom files, keeping them as placeholders
+import 'package:rhythm/custom_audio_handler/audio_scanner_utils.dart'; // Placeholder
+import 'package:rhythm/custom_audio_handler/custom_audio_handler_with_metadata.dart'; // Placeholder
+import 'package:rxdart/rxdart.dart';
+import 'package:just_audio/just_audio.dart'; // Just Audio is used internally by Audio Service/just_audio
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
+
+// --- Global State and Theme Management ---
+late AudioHandler _audioHandler;
+// ValueNotifier for theme state, making it accessible application-wide
+final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final audioHandler = await AudioService.init(
-    builder: () => AudioPlayerHandler(),
+
+  // 1. Initialize SharedPreferences and load saved theme
+  final prefs = await SharedPreferences.getInstance();
+  final savedTheme = prefs.getString('app_theme');
+  if (savedTheme == 'dark') {
+    themeNotifier.value = ThemeMode.dark;
+  } else if (savedTheme == 'light') {
+    themeNotifier.value = ThemeMode.light;
+  } else {
+    // Default to system if no preference or 'system' is saved
+    themeNotifier.value = ThemeMode.system;
+  }
+
+  // 2. Initialize Audio Handler
+  _audioHandler = await AudioService.init(
+    builder: () => CustomAudioHandler(), // CustomAudioHandler must be defined
     config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.example.rhythm.channel.audio',
-      androidNotificationChannelName: 'Music Playback',
+      androidNotificationChannelId: 'com.myaudio.channel',
+      androidNotificationChannelName: 'Audio playback',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
     ),
   );
-  Get.put(MusicController(audioHandler));
-  runApp(MyApp());
+
+  runApp(const MyApp());
 }
 
-/// ---------------- Song Model ----------------
-class Song {
-  final String title;
-  final String artist;
-  final String url;
-  final String? cover;
-  final String? videoId;
-
-  Song({
-    required this.title,
-    required this.artist,
-    required this.url,
-    this.cover,
-    this.videoId,
-  });
-
-  MediaItem toMediaItem() => MediaItem(
-    id: url,
-    title: title,
-    artist: artist,
-    artUri: cover != null ? Uri.parse(cover!) : null,
-    extras: {'uri': url, 'videoId': videoId},
-  );
-}
-
-/// ---------------- Music Controller ----------------
-class MusicController extends GetxController {
-  final AudioPlayerHandler audioHandler;
-  final RxList<Song> songs = <Song>[].obs;
-  final RxInt currentIndex = (-1).obs;
-  final RxBool isPlaying = false.obs;
-  final Rx<Duration> position = Duration.zero.obs;
-  final Rx<Duration> duration = Duration.zero.obs;
-  final RxBool isShuffling = false.obs;
-  final Rx<LoopMode> loopMode = LoopMode.off.obs;
-  final RxBool isLoading = false.obs;
-
-  // Sleep timer
-  Timer? _sleepTimer;
-  Rx<Duration?> sleepTimer = Rx<Duration?>(null);
-
-  late final ValueNotifier<double> playerHeight;
-  final double minHeight = playerMinHeight;
-
-  List<int> originalOrder = [];
-  List<int> shuffledOrder = [];
-  int _playRequestId = 0;
-
-  MusicController(this.audioHandler) {
-    playerHeight = ValueNotifier<double>(playerMinHeight);
-    _listenToAudioHandler();
-  }
-
-  void _listenToAudioHandler() {
-    audioHandler.playbackState.listen((state) {
-      print(
-        "Playback state: ${state.processingState}, playing: ${state.playing}",
-      );
-      isPlaying.value = state.playing;
-      isPlayingVN.value = state.playing;
-      isLoading.value =
-          state.processingState == AudioProcessingState.loading ||
-          state.processingState == AudioProcessingState.buffering;
-    });
-
-    audioHandler.positionDataStream.listen((data) {
-      position.value = data.position ?? Duration.zero;
-      duration.value = data.duration ?? Duration.zero;
-    });
-
-    audioHandler.mediaItem.listen((mediaItem) {
-      if (mediaItem != null) {
-        final index = songs.indexWhere((song) => song.url == mediaItem.id);
-        if (index != -1) {
-          currentIndex.value = index;
-          print(
-            "Current media item: ${mediaItem.title}, index: ${currentIndex.value}",
-          );
-        }
-      }
-    });
-  }
-
-  Future<void> scanLocalAudio() async {
-    if (Platform.isAndroid || Platform.isIOS) {
-      final status = await Permission.storage.request();
-      print("Storage permission status: $status");
-      if (!status.isGranted) {
-        Get.snackbar('Permission', 'Storage permission required.');
-        return;
-      }
-      if (Platform.isAndroid) {
-        final notificationStatus = await Permission.notification.request();
-        print("Notification permission status: $notificationStatus");
-        if (!notificationStatus.isGranted) {
-          Get.snackbar('Permission', 'Notification permission required.');
-        }
-      }
-    }
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: FileType.custom,
-      allowedExtensions: ['mp3', 'm4a', 'wav', 'aac', 'ogg'],
-    );
-    if (result == null) {
-      print("No files picked");
-      return;
-    }
-    final picked =
-        result.files
-            .where((f) => f.path != null && File(f.path!).existsSync())
-            .map((f) {
-              print("Picked file: ${f.path}");
-              return Song(
-                title: f.name.split('.').first,
-                artist: 'Unknown',
-                url: f.path!,
-              );
-            })
-            .toList();
-    if (picked.isNotEmpty) {
-      songs.assignAll(picked);
-      await _setPlaylist();
-      currentIndex.value = 0;
-    } else {
-      Get.snackbar('Error', 'No valid audio files found');
-    }
-  }
-
-  Future<void> playIndex(int index) async {
-    if (index < 0 || index >= songs.length) {
-      print("Invalid index: $index, songs length: ${songs.length}");
-      return;
-    }
-
-    final requestId = ++_playRequestId;
-    await Future.delayed(const Duration(milliseconds: 100));
-    if (requestId != _playRequestId) {
-      print("Cancelled play request $requestId");
-      return;
-    }
-
-    final actualIndex = isShuffling.value ? shuffledOrder[index] : index;
-    currentIndex.value = actualIndex;
-    isLoading.value = true;
-
-    try {
-      final mediaItems = songs.map((s) => s.toMediaItem()).toList();
-      await audioHandler.updateQueue(mediaItems, initialIndex: actualIndex);
-      await audioHandler.skipToQueueItem(actualIndex);
-      await audioHandler.play();
-
-      if (requestId == _playRequestId) {
-        isPlaying.value = true;
-        isPlayingVN.value = true;
-      }
-    } catch (e, st) {
-      print("Play error: $e\n$st");
-      if (requestId == _playRequestId) {
-        Get.snackbar(
-          'Error',
-          'Failed to play song: ${songs[actualIndex].title}',
-        );
-      }
-    } finally {
-      if (requestId == _playRequestId) {
-        isLoading.value = false;
-      }
-    }
-  }
-
-  Future<void> _setPlaylist() async {
-    if (songs.isEmpty) {
-      print("No songs to set in playlist");
-      Get.snackbar('Error', 'No songs available');
-      currentIndex.value = -1;
-      return;
-    }
-    final mediaItems = songs.map((s) => s.toMediaItem()).toList();
-    print("Setting playlist with ${mediaItems.length} items");
-    await audioHandler.updateQueue(mediaItems, initialIndex: 0);
-    originalOrder = List.generate(songs.length, (index) => index);
-    shuffledOrder = List.from(originalOrder)..shuffle();
-    currentIndex.value = 0;
-  }
-
-  void togglePlayPause() async {
-    if (songs.isEmpty) {
-      Get.snackbar('Error', 'No songs to play');
-      return;
-    }
-    if (audioHandler.playbackState.value.playing) {
-      await audioHandler.pause();
-    } else {
-      await audioHandler.play();
-    }
-  }
-
-  void next() async {
-    if (songs.isEmpty) {
-      Get.snackbar('Error', 'No songs to play');
-      return;
-    }
-
-    isLoading.value = true;
-    try {
-      int nextIndex = currentIndex.value;
-
-      if (loopMode.value == LoopMode.one) {
-        nextIndex = currentIndex.value;
-      } else if (isShuffling.value) {
-        final current = shuffledOrder.indexOf(currentIndex.value);
-        final isLast = current == shuffledOrder.length - 1;
-
-        if (loopMode.value == LoopMode.off && isLast) {
-          await stop();
-          return;
-        }
-
-        nextIndex = shuffledOrder[(current + 1) % shuffledOrder.length];
-      } else {
-        final isLast = currentIndex.value == songs.length - 1;
-
-        if (loopMode.value == LoopMode.off && isLast) {
-          await stop();
-          return;
-        }
-
-        nextIndex = (currentIndex.value + 1) % songs.length;
-      }
-
-      await playIndex(nextIndex);
-    } catch (e, st) {
-      print("Next song error: $e\n$st");
-      Get.snackbar('Error', 'Failed to play next song');
-    } finally {
-      isLoading.value = false;
-    }
-  }
-
-  void prev() async {
-    if (songs.isEmpty) {
-      Get.snackbar('Error', 'No songs to play');
-      return;
-    }
-
-    isLoading.value = true;
-    try {
-      int prevIndex = currentIndex.value;
-
-      if (loopMode.value == LoopMode.one) {
-        prevIndex = currentIndex.value;
-      } else if (isShuffling.value) {
-        final current = shuffledOrder.indexOf(currentIndex.value);
-        final isFirst = current == 0;
-
-        if (loopMode.value == LoopMode.off && isFirst) {
-          await stop();
-          return;
-        }
-
-        prevIndex =
-            shuffledOrder[(current - 1) < 0
-                ? shuffledOrder.length - 1
-                : current - 1];
-      } else {
-        final isFirst = currentIndex.value == 0;
-
-        if (loopMode.value == LoopMode.off && isFirst) {
-          await stop();
-          return;
-        }
-
-        prevIndex =
-            (currentIndex.value - 1) < 0
-                ? songs.length - 1
-                : currentIndex.value - 1;
-      }
-
-      await playIndex(prevIndex);
-    } catch (e, st) {
-      print("Previous song error: $e\n$st");
-      Get.snackbar('Error', 'Failed to play previous song');
-    } finally {
-      isLoading.value = false;
-    }
-  }
-
-  Future<void> toggleShuffle() async {
-    if (songs.isEmpty) return;
-
-    isShuffling.value = !isShuffling.value;
-
-    try {
-      audioHandler.toggleShuffle();
-    } catch (_) {}
-
-    if (isShuffling.value) {
-      shuffledOrder = List<int>.generate(songs.length, (i) => i);
-      shuffledOrder.shuffle();
-      final cur = currentIndex.value;
-      if (shuffledOrder.contains(cur)) {
-        shuffledOrder.remove(cur);
-      }
-      shuffledOrder.insert(0, cur);
-    } else {
-      shuffledOrder = List<int>.generate(songs.length, (i) => i);
-    }
-
-    print('toggleShuffle -> isShuffling: ${isShuffling.value}');
-    print('originalOrder: $originalOrder');
-    print('shuffledOrder: $shuffledOrder');
-    print('currentIndex: ${currentIndex.value}');
-  }
-
-  void toggleLoopMode() {
-    if (isShuffling.value) {
-      isShuffling.value = false;
-      audioHandler.toggleShuffle();
-      shuffledOrder = List.from(originalOrder);
-    }
-
-    final newMode = audioHandler.toggleRepeat();
-    loopMode.value = newMode;
-  }
-
-  int getNextShuffledIndex() {
-    final current = shuffledOrder.indexOf(currentIndex.value);
-    return shuffledOrder[(current + 1) % shuffledOrder.length];
-  }
-
-  int getPrevShuffledIndex() {
-    final current = shuffledOrder.indexOf(currentIndex.value);
-    return shuffledOrder[(current - 1) < 0
-        ? shuffledOrder.length - 1
-        : current - 1];
-  }
-
-  void seekTo(Duration pos) => audioHandler.seek(pos);
-
-  Future<void> stop() async {
-    await audioHandler.stop();
-    isPlaying.value = false;
-    isPlayingVN.value = false;
-    isLoading.value = false;
-  }
-
-  Timer? _sleepCountdownTimer;
-
-  void setSleepTimer(Duration? duration) {
-    _sleepCountdownTimer?.cancel();
-    sleepTimer.value = duration;
-
-    if (duration != null) {
-      _sleepCountdownTimer = Timer.periodic(Duration(seconds: 1), (_) {
-        if (sleepTimer.value == null || sleepTimer.value!.inSeconds <= 0) {
-          stop();
-          sleepTimer.value = null;
-          _sleepCountdownTimer?.cancel();
-          SystemNavigator.pop();
-        } else {
-          sleepTimer.value = sleepTimer.value! - Duration(seconds: 1);
-        }
-      });
-    }
-  }
-
-  void cancelSleepTimer() {
-    _sleepCountdownTimer?.cancel();
-    sleepTimer.value = null;
-  }
-
-  @override
-  void onClose() {
-    audioHandler.dispose();
-    super.onClose();
-  }
-}
-
-/// ---------------- YouTube Controller ----------------
-class YouTubeController extends GetxController {
-  final YoutubeExplode yt = YoutubeExplode();
-  final RxList<Song> trendingSongs = <Song>[].obs;
-  final RxList<Song> searchResults = <Song>[].obs;
-  final RxBool isLoadingMore = false.obs;
-  final RxBool isInitialLoading = true.obs;
-  Stream<Video>? _trendingStream;
-  String? _lastSearchQuery;
-
-  @override
-  void onInit() {
-    super.onInit();
-    fetchTrending();
-  }
-
-  Future<void> fetchTrending({bool loadMore = false}) async {
-    try {
-      isLoadingMore.value = loadMore;
-      if (!loadMore) {
-        isInitialLoading.value = true;
-        trendingSongs.clear();
-      }
-
-      // Fetch videos (returns a VideoSearchList)
-      final searchResults = await yt.search.getVideos('trending music');
-
-      // Take first 20 results
-      final songs =
-          searchResults.take(20).map((video) {
-            print("Trending song: ${video.title}, URL: ${video.url}");
-            return Song(
-              title: video.title,
-              artist: video.author,
-              url: video.url,
-              cover: video.thumbnails.mediumResUrl,
-              videoId: video.id.value,
-            );
-          }).toList();
-
-      if (loadMore) {
-        trendingSongs.addAll(songs);
-      } else {
-        trendingSongs.assignAll(songs);
-      }
-
-      if (songs.isEmpty && !loadMore) {
-        Get.snackbar(
-          'No Results',
-          'No trending songs found. Please try again later.',
-        );
-      }
-    } catch (e) {
-      print("YouTube trending error: $e");
-      Get.snackbar('Error', 'Failed to fetch trending songs: $e');
-    } finally {
-      isLoadingMore.value = false;
-      isInitialLoading.value = false;
-    }
-  }
-
-
-  Future<void> search(String query, {bool loadMore = false}) async {
-    if (query.isEmpty) {
-      searchResults.clear();
-      _lastSearchQuery = null;
-      return;
-    }
-
-    try {
-      isLoadingMore.value = loadMore;
-      if (!loadMore) {
-        searchResults.clear();
-        _lastSearchQuery = query;
-      }
-
-      final stream = await yt.search.getVideos('$query music');
-      final songs = <Song>[];
-      for (final video in stream.take(20)) {
-        print("Search result: ${video.title}, URL: ${video.url}");
-        songs.add(
-          Song(
-            title: video.title,
-            artist: video.author,
-            url: video.url,
-            cover: video.thumbnails.mediumResUrl,
-            videoId: video.id.value,
-          ),
-        );
-      }
-
-      if (loadMore) {
-        searchResults.addAll(songs);
-      } else {
-        searchResults.assignAll(songs);
-      }
-
-      if (songs.isEmpty && !loadMore) {
-        Get.snackbar('No Results', 'No songs found for "$query".');
-      }
-    } catch (e) {
-      print("YouTube search error: $e");
-      Get.snackbar('Error', 'Failed to search songs: $e');
-    } finally {
-      isLoadingMore.value = false;
-    }
-  }
-
-  @override
-  void onClose() {
-    yt.close();
-    super.onClose();
-  }
-}
-
-/// ---------------- Global Vars ----------------
-const double playerMinHeight = 70;
-late double playerMaxHeight;
-final ValueNotifier<double> playerExpandProgress = ValueNotifier(
-  playerMinHeight,
-);
-final ValueNotifier<Color> appPrimaryColor = ValueNotifier(Colors.blue);
-final ValueNotifier<bool> isPlayingVN = ValueNotifier(false);
-
-/// ---------------- MyApp ----------------
+// --- App Root Widget ---
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<Color>(
-      valueListenable: appPrimaryColor,
-      builder: (context, color, child) {
-        return GetMaterialApp(
-          title: 'Rhythm Music',
-          debugShowCheckedModeBanner: false,
+    // Use ValueListenableBuilder to rebuild the MaterialApp when the theme changes
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, mode, __) {
+        return MaterialApp(
+          title: 'Rhythm Player',
+          // Define Light Theme
           theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: color,
-              brightness: Brightness.light,
+            primarySwatch: Colors.blue,
+            brightness: Brightness.light,
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
             ),
-            fontFamily: 'SF Pro',
-            cupertinoOverrideTheme: CupertinoThemeData(
-              primaryColor: color,
-              scaffoldBackgroundColor: CupertinoColors.systemBackground,
-              barBackgroundColor: CupertinoColors.systemBackground.withOpacity(
-                0.8,
-              ),
-              textTheme: CupertinoTextThemeData(
-                navTitleTextStyle: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: CupertinoColors.label,
-                  fontFamily: 'SF Pro',
-                ),
-                textStyle: TextStyle(
-                  fontSize: 16,
-                  color: CupertinoColors.label,
-                  fontFamily: 'SF Pro',
-                ),
-              ),
-            ),
+            // Customizing for light mode
+            listTileTheme: const ListTileThemeData(iconColor: Colors.grey),
           ),
+          // Define Dark Theme
           darkTheme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: color,
-              brightness: Brightness.dark,
+            primarySwatch: Colors.blue,
+            brightness: Brightness.dark,
+            scaffoldBackgroundColor: Colors.black,
+            cardColor: Colors.grey[900],
+            dialogBackgroundColor: Colors.grey[850],
+            appBarTheme: AppBarTheme(
+              backgroundColor: Colors.grey[900],
+              foregroundColor: Colors.white,
             ),
-            fontFamily: 'SF Pro',
-            cupertinoOverrideTheme: CupertinoThemeData(
-              brightness: Brightness.dark,
-              primaryColor: color,
-              scaffoldBackgroundColor: CupertinoColors.systemBackground
-                  .resolveFrom(context),
-              barBackgroundColor: CupertinoColors.systemBackground
-                  .resolveFrom(context)
-                  .withOpacity(0.8),
-              textTheme: CupertinoTextThemeData(
-                navTitleTextStyle: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: CupertinoColors.label.darkColor,
-                  fontFamily: 'SF Pro',
-                ),
-                textStyle: TextStyle(
-                  fontSize: 16,
-                  color: CupertinoColors.label.darkColor,
-                  fontFamily: 'SF Pro',
-                ),
+            // Customizing for dark mode
+            listTileTheme: const ListTileThemeData(iconColor: Colors.blueGrey),
+            textTheme: Typography.whiteMountainView.copyWith(
+              bodyMedium: const TextStyle(color: Colors.white70),
+              bodyLarge: const TextStyle(color: Colors.white),
+              titleMedium: const TextStyle(color: Colors.white),
+            ),
+            dividerColor: Colors.white12,
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
               ),
             ),
           ),
-          themeMode: ThemeMode.system,
-          home: MyHomePage(),
+          themeMode: mode, // Use the dynamically managed theme mode
+          home: const MainScreen(),
         );
       },
     );
   }
 }
 
-/// ---------------- Home ----------------
-class MyHomePage extends StatefulWidget {
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _selectedIndex = 0;
-  final _pages = [YouTubeHomePage(), LocalSongsPage(), ProfileScreen()];
-  final musicCon = Get.find<MusicController>();
-  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+// --- Main Screen Widget ---
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    playerMaxHeight = MediaQuery.of(context).size.height;
-
-    return Scaffold(
-      body: Stack(
-        children: [
-          Navigator(
-            key: _navigatorKey,
-            onGenerateRoute:
-                (_) =>
-                    CupertinoPageRoute(builder: (_) => _pages[_selectedIndex]),
-          ),
-          Obx(() {
-            if (musicCon.songs.isEmpty || musicCon.currentIndex.value < 0) {
-              return SizedBox.shrink();
-            }
-            return Miniplayer(
-              minHeight: playerMinHeight,
-              maxHeight: playerMaxHeight,
-              valueNotifier: musicCon.playerHeight,
-              builder: (height, percentage) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  playerExpandProgress.value = height;
-                });
-                return PlayerUI(percentage: percentage);
-              },
-            );
-          }),
-        ],
-      ),
-      bottomNavigationBar: ValueListenableBuilder<double>(
-        valueListenable: playerExpandProgress,
-        builder: (context, height, child) {
-          final value = ((height - playerMinHeight) /
-                  (playerMaxHeight - playerMinHeight))
-              .clamp(0.0, 1.0);
-          final translateY = kBottomNavigationBarHeight * value * 0.5;
-
-          return Material(
-            child: Align(
-              heightFactor: 1 - value,
-              child: Transform.translate(
-                offset: Offset(0.0, translateY),
-                child: BottomNavigationBar(
-                  elevation: 0,
-                  currentIndex: _selectedIndex,
-                  onTap: (index) {
-                    if (_selectedIndex == index) return;
-                    setState(() => _selectedIndex = index);
-                    _navigatorKey.currentState!.pushReplacement(
-                      CupertinoPageRoute(builder: (_) => _pages[index]),
-                    );
-                  },
-                  selectedItemColor: Theme.of(context).colorScheme.primary,
-                  unselectedItemColor:
-                      Theme.of(context).colorScheme.onSurfaceVariant,
-                  backgroundColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withOpacity(0.08),
-                  items: const [
-                    BottomNavigationBarItem(
-                      icon: Icon(CupertinoIcons.house_fill),
-                      label: "YouTube",
-                    ),
-                    BottomNavigationBarItem(
-                      icon: Icon(CupertinoIcons.music_note_2),
-                      label: "Local",
-                    ),
-                    BottomNavigationBarItem(
-                      icon: Icon(CupertinoIcons.person_fill),
-                      label: "Profile",
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
+  _MainScreenState createState() => _MainScreenState();
 }
 
-/// ---------------- YouTube Home ----------------
-class YouTubeHomePage extends StatefulWidget {
-  @override
-  _YouTubeHomePageState createState() => _YouTubeHomePageState();
-}
+// --- Main Screen State ---
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+  // Utility for scanning local music files
+  final LocalMusicScanner _scanner = LocalMusicScanner();
 
-class _YouTubeHomePageState extends State<YouTubeHomePage> {
-  final youtubeCon = Get.put(YouTubeController());
-  final musicCon = Get.find<MusicController>();
-  final searchCtrl = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
+  // State variables for local music management
+  List<SongInfo> _musicFiles = [];
+  bool _isScanning = false;
+  String? _message;
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  // Static list of online songs (used for demo/testing)
+  static final List<MediaItem> _onlineItems = [
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3',
+      title: 'A Good Bass for Gambling',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3',
+      title: 'A Surprising Encounter',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    // ... other online items
+  ];
+
+  // Stream that combines the current media item and playback position
+  Stream<MediaState> get _mediaStateStream =>
+      Rx.combineLatest2<MediaItem?, Duration, MediaState>(
+        _audioHandler.mediaItem,
+        AudioService.position,
+        (mediaItem, position) => MediaState(mediaItem, position),
+      );
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-              _scrollController.position.maxScrollExtent - 100 &&
-          !youtubeCon.isLoadingMore.value) {
-        if (searchCtrl.text.isEmpty) {
-          youtubeCon.fetchTrending(loadMore: true);
-        } else {
-          youtubeCon.search(searchCtrl.text, loadMore: true);
-        }
-      }
+    WidgetsBinding.instance.addObserver(this);
+
+    // Subscribe to media item changes to update the current ID and save state
+    _mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
+      _saveCurrentState();
+      setState(() {
+        _currentId = item?.id;
+      });
     });
+
+    // Listen to queue changes to save state
+    _audioHandler.queue.listen((_) {
+      _saveCurrentState();
+    });
+
+    _loadSavedSongs();
+    _loadLastState();
   }
 
   @override
   void dispose() {
-    _scrollController.dispose();
-    searchCtrl.dispose();
+    _mediaItemSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Save state when the app is paused (e.g., sent to background)
+    if (state == AppLifecycleState.paused) {
+      _saveCurrentState();
+    }
+  }
+
+  // --- Utility Methods ---
+
+  // Formats a Duration object into a 'mm:ss' or 'h:mm:ss' string.
+  String _formatDuration(Duration duration) {
+    if (duration == Duration.zero) return '--:--';
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
+    if (duration.inHours > 0) {
+      return "${duration.inHours}:$twoDigitMinutes:$twoDigitSeconds";
+    }
+    return "$twoDigitMinutes:$twoDigitSeconds";
+  }
+
+  // Checks if a given song ID is the one currently playing
+  bool _isCurrent(String id) {
+    return id == _currentId;
+  }
+
+  // Toggles between light and dark theme
+  void _toggleTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentTheme = themeNotifier.value;
+    ThemeMode newTheme;
+
+    if (currentTheme == ThemeMode.dark) {
+      newTheme = ThemeMode.light;
+      await prefs.setString('app_theme', 'light');
+    } else {
+      newTheme = ThemeMode.dark;
+      await prefs.setString('app_theme', 'dark');
+    }
+    themeNotifier.value = newTheme;
+  }
+
+  // --- Data Persistence and Loading ---
+
+  // Loads previously saved local songs from SharedPreferences
+  Future<void> _loadSavedSongs() async {
+    // ... (Your existing _loadSavedSongs logic) ...
+    final prefs = await SharedPreferences.getInstance();
+    final savedSongsJson = prefs.getString('saved_songs');
+    if (savedSongsJson == null) {
+      setState(() {
+        _musicFiles = [];
+        _message = 'No saved songs found. Scan to find songs.';
+      });
+      return;
+    }
+
+    try {
+      final savedList = json.decode(savedSongsJson) as List;
+      final loadedSongs = <SongInfo>[];
+
+      for (final map in savedList) {
+        if (map is Map<String, dynamic>) {
+          // Assuming SongInfo.fromJson is an async method
+          final song = await SongInfo.fromJson(map);
+          if (song != null) loadedSongs.add(song);
+        } else if (map is Map) {
+          final song = await SongInfo.fromJson(Map<String, dynamic>.from(map));
+          if (song != null) loadedSongs.add(song);
+        }
+      }
+
+      setState(() {
+        _musicFiles = loadedSongs;
+        _message = 'Loaded ${loadedSongs.length} saved songs.';
+      });
+    } catch (e) {
+      debugPrint('Error loading saved songs: $e');
+      setState(() {
+        _musicFiles = [];
+        _message = 'Failed to load saved songs.';
+      });
+    }
+  }
+
+  // Saves the current list of found songs to SharedPreferences
+  Future<void> _saveSongs() async {
+    // ... (Your existing _saveSongs logic) ...
+    final prefs = await SharedPreferences.getInstance();
+    final appDir = await getApplicationDocumentsDirectory();
+
+    // Ensure a folder exists for album arts
+    final artDir = Directory('${appDir.path}/album_arts');
+    if (!await artDir.exists()) {
+      await artDir.create(recursive: true);
+    }
+
+    // Convert all SongInfo objects to JSON-safe maps
+    final musicLists = _musicFiles.map((item) => item.toJson()).toList();
+
+    await prefs.setString('saved_songs', json.encode(musicLists));
+    debugPrint('🎵 Saved ${musicLists.length} songs with album arts.');
+  }
+
+  // Loads the playback state (queue, index, position) from the last session
+  Future<void> _loadLastState() async {
+    // ... (Your existing _loadLastState logic) ...
+    final prefs = await SharedPreferences.getInstance();
+    final lastQueueJson = prefs.getString('last_queue');
+    if (lastQueueJson != null) {
+      final lastQueueList = json.decode(lastQueueJson) as List;
+      final items = <MediaItem>[];
+      final sources = <AudioSource>[];
+      for (var map in lastQueueList) {
+        final id = map['id'];
+        final item = MediaItem(
+          id: id,
+          title: map['title'] ?? 'Unknown Title',
+          artist: map['artist'],
+          album: map['album'],
+          duration: Duration(milliseconds: map['duration'] ?? 0),
+          artUri: map['artUri'] != null ? Uri.parse(map['artUri']) : null,
+        );
+        items.add(item);
+        // Assuming Local/Online songs can both be played via URI in CustomAudioHandler
+        sources.add(AudioSource.uri(Uri.parse(id), tag: item));
+      }
+      if (items.isNotEmpty) {
+        final lastIndex = prefs.getInt('last_index') ?? 0;
+        final lastPosition = Duration(
+          milliseconds: prefs.getInt('last_position') ?? 0,
+        );
+        // Load the saved playlist into the CustomAudioHandler
+        await (_audioHandler as CustomAudioHandler).loadPlaylist(
+          items,
+          sources,
+          initialIndex: lastIndex,
+        );
+        await _audioHandler.pause();
+        await _audioHandler.seek(lastPosition);
+      }
+    }
+  }
+
+  // Saves the current playback state (queue, index) to SharedPreferences
+  Future<void> _saveCurrentState() async {
+    // ... (Your existing _saveCurrentState logic) ...
+    final prefs = await SharedPreferences.getInstance();
+    final currentQueue = _audioHandler.queue.value;
+    if (currentQueue.isEmpty) return;
+    final queueList =
+        currentQueue.map((item) {
+          return {
+            'id': item.id,
+            'title': item.title,
+            'artist': item.artist,
+            'album': item.album,
+            'duration': item.duration?.inMilliseconds,
+            'artUri': item.artUri?.toString(),
+          };
+        }).toList();
+    await prefs.setString('last_queue', json.encode(queueList));
+    await prefs.setInt(
+      'last_index',
+      _audioHandler.playbackState.value.queueIndex ?? 0,
+    );
+    // Setting position to 0 to resume from start of the track on reload
+    await prefs.setInt(
+      'last_position',
+      0, // Consider saving the actual position here if you want resume playback
+    );
+  }
+
+  // --- Scanning Logic ---
+
+  // Starts a general automatic scan for music files
+  Future<void> _startScan() async {
+    // ... (Your existing _startScan logic) ...
+    setState(() {
+      _isScanning = true;
+      _musicFiles = [];
+      _message = 'Requesting permissions...';
+    });
+    final granted = await _scanner.requestPermission();
+    if (!granted) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Storage permission denied. Cannot scan local files.';
+      });
+      return;
+    }
+    setState(() => _message = 'Scanning directories...');
+    try {
+      final foundSongs = await _scanner.startSafeAutoScan();
+      setState(() {
+        _musicFiles = foundSongs;
+        _isScanning = false;
+        _message = 'Found ${foundSongs.length} songs.';
+      });
+      await _saveSongs();
+    } catch (e) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Scan failed: $e';
+      });
+    }
+  }
+
+  // Allows the user to select a folder and scans it
+  Future<void> _selectAndScanFolder() async {
+    // ... (Your existing _selectAndScanFolder logic) ...
+    final String? directoryPath = await FilePicker.platform.getDirectoryPath();
+    if (directoryPath == null) return;
+
+    setState(() {
+      _isScanning = true;
+      _musicFiles = [];
+      _message = 'Requesting permissions...';
+    });
+    final granted = await _scanner.requestPermission();
+    if (!granted) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Storage permission denied. Cannot scan selected folder.';
+      });
+      return;
+    }
+    setState(() => _message = 'Scanning selected folder...');
+    try {
+      final foundSongs = await _scanner.scanDirectory(directoryPath);
+      setState(() {
+        _musicFiles = foundSongs;
+        _isScanning = false;
+        _message = 'Found ${foundSongs.length} songs in selected folder.';
+      });
+      await _saveSongs();
+    } catch (e) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Scan failed: $e';
+      });
+    }
+  }
+
+  // --- Playback Controls ---
+
+  // Starts playback for a list of local songs
+  void _playLocalSongs(List<SongInfo> playlist, int index) {
+    // Ensure CustomAudioHandler has playLocalPlaylist method
+    (_audioHandler as CustomAudioHandler).playLocalPlaylist(playlist, index);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Playing local: ${playlist[index].meta.title}')),
+    );
+  }
+
+  // Starts playback for a list of online songs
+  void _playOnlineSongs(List<MediaItem> items, int index) {
+    // Ensure CustomAudioHandler has playOnlinePlaylist method
+    (_audioHandler as CustomAudioHandler).playOnlinePlaylist(items, index);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Playing online: ${items[index].title}')),
+    );
+  }
+
+  // --- UI Builder Methods for Tabs ---
+
+  Widget _buildSongsTab() {
+    // ... (Your existing _buildSongsTab logic) ...
+    return ListView.builder(
+      itemCount: _musicFiles.length,
+      itemBuilder: (context, index) {
+        final song = _musicFiles[index];
+        final songId = Uri.file(song.file.path).toString();
+        return ListTile(
+          title: Text(song.meta.title),
+          subtitle: Text('${song.meta.artist} - ${song.meta.album}'),
+          leading: const Icon(Icons.music_note),
+          trailing:
+              _isCurrent(songId)
+                  ? const Icon(Icons.volume_up, color: Colors.blue)
+                  : null,
+          onTap: () => _playLocalSongs(_musicFiles, index),
+        );
+      },
+    );
+  }
+
+  Widget _buildArtistsTab() {
+    // ... (Your existing _buildArtistsTab logic) ...
+    Map<String, List<SongInfo>> artists = {};
+    for (var song in _musicFiles) {
+      var artist = song.meta.artist;
+      artists.putIfAbsent(artist, () => []).add(song);
+    }
+    var artistList = artists.keys.toList()..sort();
+    return ListView.builder(
+      itemCount: artistList.length,
+      itemBuilder: (context, index) {
+        final artist = artistList[index];
+        final songs = artists[artist]!;
+        return ExpansionTile(
+          title: Text(artist),
+          children:
+              songs.map((song) {
+                final songId = Uri.file(song.file.path).toString();
+                return ListTile(
+                  title: Text(song.meta.title),
+                  subtitle: Text(song.meta.album),
+                  leading: const Icon(Icons.music_note),
+                  trailing:
+                      _isCurrent(songId)
+                          ? const Icon(Icons.volume_up, color: Colors.blue)
+                          : null,
+                  onTap: () => _playLocalSongs(songs, songs.indexOf(song)),
+                );
+              }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildAlbumsTab() {
+    // ... (Your existing _buildAlbumsTab logic) ...
+    Map<String, List<SongInfo>> albums = {};
+    for (var song in _musicFiles) {
+      var album = song.meta.album;
+      albums.putIfAbsent(album, () => []).add(song);
+    }
+    var albumList = albums.keys.toList()..sort();
+    return ListView.builder(
+      itemCount: albumList.length,
+      itemBuilder: (context, index) {
+        final album = albumList[index];
+        final songs = albums[album]!;
+        return ExpansionTile(
+          title: Text(album),
+          children:
+              songs.map((song) {
+                final songId = Uri.file(song.file.path).toString();
+                return ListTile(
+                  title: Text(song.meta.title),
+                  subtitle: Text(song.meta.artist),
+                  leading: const Icon(Icons.music_note),
+                  trailing:
+                      _isCurrent(songId)
+                          ? const Icon(Icons.volume_up, color: Colors.blue)
+                          : null,
+                  onTap: () => _playLocalSongs(songs, songs.indexOf(song)),
+                );
+              }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildOnlineTab() {
+    // ... (Your existing _buildOnlineTab logic) ...
+    return ListView.builder(
+      itemCount: _onlineItems.length,
+      itemBuilder: (context, index) {
+        final item = _onlineItems[index];
+        return ListTile(
+          title: Text(item.title),
+          subtitle: Text(
+            '${item.artist ?? 'Unknown'} - ${item.album ?? 'Unknown'}',
+          ),
+          leading: const Icon(Icons.public), // Differentiate online
+          trailing:
+              _isCurrent(item.id)
+                  ? const Icon(Icons.volume_up, color: Colors.blue)
+                  : null,
+          onTap: () => _playOnlineSongs(_onlineItems, index),
+        );
+      },
+    );
+  }
+
+  // --- Main Build Method ---
+  @override
   Widget build(BuildContext context) {
-    final bottomPadding =
-        musicCon.songs.isNotEmpty && musicCon.currentIndex.value >= 0
-            ? playerMinHeight + kBottomNavigationBarHeight
-            : kBottomNavigationBarHeight;
+    // Determine if the current theme is dark to adjust colors for the custom player UI
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryColor = isDark ? Colors.blueAccent : Colors.blue;
+    final inactiveColor = isDark ? Colors.white.withOpacity(0.4) : Colors.grey;
 
-    return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(
-        middle: Text(
-          "Discover",
-          style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-        ),
-        backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-        border: null,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Rhythm Audio Player'),
+        actions: [
+          // Theme Switch Button
+          IconButton(
+            icon: Icon(
+              themeNotifier.value == ThemeMode.dark
+                  ? Icons.light_mode
+                  : Icons.dark_mode,
+            ),
+            onPressed: _toggleTheme,
+            tooltip: 'Toggle Theme',
+          ),
+        ],
       ),
-      child: SafeArea(
-        child: CustomScrollView(
-          controller: _scrollController,
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: CupertinoSearchTextField(
-                  controller: searchCtrl,
-                  placeholder: "Search YouTube Music",
-                  style: CupertinoTheme.of(context).textTheme.textStyle,
-                  
-                  onSubmitted: (value) async{
-                    await youtubeCon.search(value);
-                    setState(() {
-                      
-                    });
-                  },
-                  prefixInsets: EdgeInsetsDirectional.fromSTEB(6, 0, 0, 0),
-                  borderRadius: BorderRadius.circular(10),
-                  backgroundColor: CupertinoColors.systemGrey6.resolveFrom(
-                    context,
-                  ),
-                ),
-              ),
-            ),
-            Obx(() {
-              final list =
-                  searchCtrl.text.isEmpty
-                      ? youtubeCon.trendingSongs
-                      : youtubeCon.searchResults;
-              if (youtubeCon.isInitialLoading.value) {
-                return SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Center(
-                      child: CupertinoActivityIndicator(radius: 16),
-                    ),
-                  ),
-                );
-              }
-              if (list.isEmpty) {
-                return SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      searchCtrl.text.isEmpty
-                          ? "No trending songs found. Pull to refresh."
-                          : "No search results found for \"${searchCtrl.text}\".",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: CupertinoColors.secondaryLabel.resolveFrom(
-                          context,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }
-              return SliverList(
-                delegate: SliverChildListDelegate([
-                  CupertinoListSection.insetGrouped(
-                    header: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Text(
-                        searchCtrl.text.isEmpty
-                            ? "Trending Now"
-                            : "Search Results",
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: CupertinoColors.label.resolveFrom(context),
-                        ),
-                      ),
-                    ),
-                    children:
-                        list.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final s = entry.value;
-                          final isPlaying =
-                              musicCon.currentIndex.value == i &&
-                              musicCon.songs.isNotEmpty &&
-                              musicCon.songs.contains(s);
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // --- Compact Player UI ---
+            _buildCompactPlayer(isDark, primaryColor, inactiveColor),
 
-                          return CupertinoListTile(
-                            leading:
-                                s.cover != null
-                                    ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Image.network(
-                                        s.cover!,
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) =>
-                                                Icon(
-                                                  CupertinoIcons.music_note_2,
-                                                  size: 30,
-                                                  color: CupertinoColors
-                                                      .secondaryLabel
-                                                      .resolveFrom(context),
-                                                ),
-                                      ),
-                                    )
-                                    : Icon(
-                                      CupertinoIcons.music_note_2,
-                                      size: 30,
-                                      color: CupertinoColors.secondaryLabel
-                                          .resolveFrom(context),
-                                    ),
-                            title: Text(
-                              s.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  CupertinoTheme.of(
-                                    context,
-                                  ).textTheme.textStyle,
-                            ),
-                            subtitle: Text(
-                              s.artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: CupertinoColors.secondaryLabel
-                                    .resolveFrom(context),
-                              ),
-                            ),
-                            trailing:
-                                isPlaying
-                                    ? Icon(
-                                      CupertinoIcons.waveform,
-                                      color:
-                                          CupertinoTheme.of(
-                                            context,
-                                          ).primaryColor,
-                                      size: 24,
-                                    )
-                                    : null,
-                            onTap: () {
-                              musicCon.songs.assignAll(list);
-                              musicCon.playIndex(i);
-                            },
-                          );
-                        }).toList(),
-                  ),
-                  if (youtubeCon.isLoadingMore.value)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(
-                        child: CupertinoActivityIndicator(radius: 16),
-                      ),
-                    ),
-                ]),
-              );
-            }),
-            SliverPadding(
-              padding: EdgeInsets.only(bottom: bottomPadding),
-              sliver: CupertinoSliverRefreshControl(
-                onRefresh: () async {
-                  if (searchCtrl.text.isEmpty) {
-                    await youtubeCon.fetchTrending();
-                  } else {
-                    await youtubeCon.search(searchCtrl.text);
-                  }
-                },
-              ),
-            ),
+            const Divider(height: 40),
+
+            // --- Control and Scan Buttons ---
+            _buildControlButtons(),
+
+            const SizedBox(height: 20),
+
+            // --- Scanning Status and Song List ---
+            _buildMusicListSection(),
           ],
         ),
       ),
     );
   }
-}
 
-/// ---------------- Local Songs ----------------
-class LocalSongsPage extends StatelessWidget {
-  final musicCon = Get.find<MusicController>();
-
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(
-        middle: Text(
-          "My Music",
-          style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-        ),
-        backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-        border: null,
-      ),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                CupertinoButton.filled(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Text(
-                    'Scan Local Audio',
-                    style: TextStyle(
-                      color: CupertinoColors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  onPressed: () => musicCon.scanLocalAudio(),
-                ),
-                const SizedBox(height: 16),
-                CupertinoButton(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  borderRadius: BorderRadius.circular(10),
-                  color: CupertinoColors.systemGrey6.resolveFrom(context),
-                  child: Text(
-                    'Open Second Screen',
-                    style: TextStyle(
-                      color: CupertinoColors.label.resolveFrom(context),
-                      fontSize: 16,
-                    ),
-                  ),
-                  onPressed:
-                      () => Navigator.push(
-                        context,
-                        CupertinoPageRoute(builder: (_) => SecondScreen()),
-                      ),
-                ),
-                const SizedBox(height: 12),
-                CupertinoButton(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  borderRadius: BorderRadius.circular(10),
-                  color: CupertinoColors.systemGrey6.resolveFrom(context),
-                  child: Text(
-                    'Open Third Screen',
-                    style: TextStyle(
-                      color: CupertinoColors.label.resolveFrom(context),
-                      fontSize: 16,
-                    ),
-                  ),
-                  onPressed:
-                      () => Navigator.of(
-                        context,
-                        rootNavigator: true,
-                      ).push(CupertinoPageRoute(builder: (_) => ThirdScreen())),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Choose Theme Color',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: CupertinoColors.label.resolveFrom(context),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                GridView.count(
-                  crossAxisCount: 5,
-                  shrinkWrap: true,
-                  physics: NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  children:
-                      Colors.primaries.map((c) {
-                        return GestureDetector(
-                          onTap: () => appPrimaryColor.value = c,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: c,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color:
-                                    appPrimaryColor.value == c
-                                        ? CupertinoColors.white
-                                        : CupertinoColors.systemGrey4
-                                            .resolveFrom(context),
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                ),
-                const SizedBox(height: 20),
-                Obx(() {
-                  if (musicCon.songs.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        "No local songs found. Try scanning your device.",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: CupertinoColors.secondaryLabel.resolveFrom(
-                            context,
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-                  return CupertinoListSection.insetGrouped(
-                    header: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        "Local Songs",
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: CupertinoColors.label.resolveFrom(context),
-                        ),
-                      ),
-                    ),
-                    children:
-                        musicCon.songs.asMap().entries.map((entry) {
-                          final i = entry.key;
-                          final s = entry.value;
-                          final isPlaying = musicCon.currentIndex.value == i;
-
-                          return CupertinoListTile(
-                            leading: Icon(
-                              CupertinoIcons.music_note_2,
-                              size: 30,
-                              color: CupertinoColors.secondaryLabel.resolveFrom(
-                                context,
-                              ),
-                            ),
-                            title: Text(
-                              s.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  CupertinoTheme.of(
-                                    context,
-                                  ).textTheme.textStyle,
-                            ),
-                            subtitle: Text(
-                              s.artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: CupertinoColors.secondaryLabel
-                                    .resolveFrom(context),
-                              ),
-                            ),
-                            trailing:
-                                isPlaying
-                                    ? Icon(
-                                      CupertinoIcons.waveform,
-                                      color:
-                                          CupertinoTheme.of(
-                                            context,
-                                          ).primaryColor,
-                                      size: 24,
-                                    )
-                                    : null,
-                            onTap: () => musicCon.playIndex(i),
-                          );
-                        }).toList(),
-                  );
-                }),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// ---------------- Dummy Screens ----------------
-class SecondScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => CupertinoPageScaffold(
-    navigationBar: CupertinoNavigationBar(
-      middle: Text(
-        "Second Screen",
-        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-      ),
-      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-      border: null,
-    ),
-    child: SafeArea(
-      child: Center(
-        child: Text(
-          "Second Screen",
-          style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class ThirdScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => CupertinoPageScaffold(
-    navigationBar: CupertinoNavigationBar(
-      middle: Text(
-        "Third Screen",
-        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-      ),
-      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-      border: null,
-    ),
-    child: SafeArea(
-      child: Center(
-        child: Text(
-          "Third Screen",
-          style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-/// ---------------- Profile ----------------
-class ProfileScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => CupertinoPageScaffold(
-    navigationBar: CupertinoNavigationBar(
-      middle: Text(
-        "Profile",
-        style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
-      ),
-      backgroundColor: CupertinoTheme.of(context).barBackgroundColor,
-      border: null,
-    ),
-    child: SafeArea(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircleAvatar(
-            radius: 50,
-            backgroundColor: CupertinoTheme.of(context).primaryColor,
-            child: Icon(
-              CupertinoIcons.person_fill,
-              size: 60,
-              color: CupertinoColors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            "User Profile",
-            style: CupertinoTheme.of(context).textTheme.textStyle.copyWith(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Manage your music preferences",
-            style: TextStyle(
-              fontSize: 16,
-              color: CupertinoColors.secondaryLabel.resolveFrom(context),
-            ),
-          ),
-          const SizedBox(height: 24),
-          CupertinoButton.filled(
-            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            borderRadius: BorderRadius.circular(10),
+  // Refactored method to build the compact player widget
+  Widget _buildCompactPlayer(
+    bool isDark,
+    Color primaryColor,
+    Color inactiveColor,
+  ) {
+    return StreamBuilder<MediaItem?>(
+      stream: _audioHandler.mediaItem,
+      builder: (context, snapshot) {
+        final mediaItem = snapshot.data;
+        if (mediaItem == null) {
+          return Center(
             child: Text(
-              'Sign Out',
-              style: TextStyle(
-                color: CupertinoColors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
+              'Select a track to play.',
+              style: TextStyle(color: isDark ? Colors.white70 : Colors.black54),
             ),
-            onPressed: () {
-              Get.snackbar('Sign Out', 'Signed out successfully');
-            },
+          );
+        }
+
+        Widget artWidget;
+        // Determine the album art widget (simplified for the compact view)
+        if (mediaItem.artUri != null) {
+          final uri = mediaItem.artUri!;
+          if (uri.scheme == 'file') {
+            artWidget = Image.file(
+              File.fromUri(uri),
+              height: 50,
+              width: 50,
+              fit: BoxFit.cover,
+              errorBuilder:
+                  (context, error, stackTrace) =>
+                      Icon(Icons.album, size: 50, color: inactiveColor),
+            );
+          } else {
+            artWidget = Image.network(
+              uri.toString(),
+              height: 50,
+              width: 50,
+              fit: BoxFit.cover,
+              errorBuilder:
+                  (context, error, stackTrace) =>
+                      Icon(Icons.album, size: 50, color: inactiveColor),
+            );
+          }
+        } else {
+          artWidget = Icon(Icons.album, size: 50, color: inactiveColor);
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(12.0),
+          decoration: BoxDecoration(
+            color:
+                isDark
+                    ? Colors.grey[900]
+                    : Colors.blueGrey[50], // Theme-appropriate background
+            borderRadius: BorderRadius.circular(16.0),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
+                blurRadius: 10,
+                spreadRadius: 2,
+              ),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
-}
-
-/// ---------------- Player UI ----------------
-class PlayerUI extends StatelessWidget {
-  final double percentage;
-  PlayerUI({required this.percentage});
-  final musicCon = Get.find<MusicController>();
-
-  @override
-  Widget build(BuildContext context) {
-    return _buildAnimatedCollapsedRow(context, percentage);
-  }
-
-  String _formatDuration(Duration d) {
-    String two(int n) => n.toString().padLeft(2, "0");
-    final min = two(d.inMinutes.remainder(60));
-    final sec = two(d.inSeconds.remainder(60));
-    return "$min:$sec";
-  }
-
-  Widget _buildAnimatedCollapsedRow(BuildContext context, double percentage) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final collapsedSize = screenHeight * 0.06;
-    final expandedSize = screenHeight * 0.4;
-
-    final imageSize = lerpDouble(collapsedSize, expandedSize, percentage)!;
-    final imageLeft =
-        lerpDouble(
-          screenWidth * 0.023,
-          (screenWidth - expandedSize) / 2,
-          percentage,
-        )!;
-    final imageTop =
-        lerpDouble(
-          (playerMinHeight - collapsedSize) / 2,
-          screenHeight * 0.19,
-          percentage,
-        )!;
-    final imageRadius = lerpDouble(10.0, 20.0, percentage)!;
-
-    final titleSize = lerpDouble(16.0, 24.0, percentage)!;
-    final titleWidth = lerpDouble(245.0, 320.0, percentage)!;
-    final artistSize = lerpDouble(14.0, 18.0, percentage)!;
-    final textLeft =
-        lerpDouble(screenWidth * 0.178, screenWidth * 0.08, percentage)!;
-    final textTop =
-        lerpDouble(screenHeight * 0.014, screenHeight * 0.68, percentage)!;
-
-    final collapsedIconSize = screenHeight * 0.035;
-    final expandedIconSize = screenHeight * 0.05;
-    final iconSize =
-        lerpDouble(collapsedIconSize, expandedIconSize, percentage)!;
-    final buttonLeft =
-        lerpDouble(
-          screenWidth - screenWidth * 0.18,
-          screenWidth / 2 - iconSize * 0.8,
-          percentage,
-        )!;
-    final buttonTop =
-        lerpDouble(screenHeight * 0.012, screenHeight * 0.825, percentage)!;
-
-    final sliderTop =
-        lerpDouble(screenHeight * 0.079, screenHeight * 0.768, percentage)!;
-    final horizontalPadding = lerpDouble(0, screenWidth * 0.06, percentage)!;
-
-    final bgColor = lerpDouble(0.08, 0.05, percentage)!;
-    final bgTopRadius = lerpDouble(20, 0, percentage)!;
-
-    final sleeperTop =
-        lerpDouble(screenHeight * 0.3, screenHeight * 0.94, percentage)!;
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary.withOpacity(bgColor),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(bgTopRadius),
-          topRight: Radius.circular(bgTopRadius),
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Expanded controls + slider
-          Positioned(
-            left: 0,
-            right: 0,
-            top: sliderTop,
-            child: IgnorePointer(
-              ignoring: percentage < 0.01,
-              child: Column(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top Row: Album Art, Title/Artist, Status Icon
+              Row(
                 children: [
-                  // Slider
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: horizontalPadding,
+                  // Album Art
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6.0),
+                    child: Container(
+                      height: 50,
+                      width: 50,
+                      color:
+                          isDark ? Colors.grey.shade800 : Colors.grey.shade300,
+                      child: artWidget,
                     ),
-                    child: Obx(() {
-                      final dur = musicCon.duration.value.inMilliseconds;
-                      final pos = musicCon.position.value.inMilliseconds;
-                      double value = 0.0;
-                      if (dur > 0) value = (pos / dur).clamp(0.0, 1.0);
-                      return SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          thumbShape: const RoundSliderThumbShape(
-                            enabledThumbRadius: 2,
-                          ),
-                          overlayShape: const RoundSliderOverlayShape(
-                            overlayRadius: 0,
-                          ),
-                          trackHeight: lerpDouble(3, 8, percentage)!,
-                        ),
-                        child: Slider(
-                          value: value,
-                          onChanged: (v) {
-                            final seekMs =
-                                ((musicCon.duration.value.inMilliseconds) * v)
-                                    .round();
-                            musicCon.seekTo(Duration(milliseconds: seekMs));
-                          },
-                        ),
-                      );
-                    }),
                   ),
-                  Opacity(
-                    opacity: percentage,
+                  const SizedBox(width: 10),
+
+                  // Title and Artist
+                  Expanded(
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        SizedBox(height: screenHeight * 0.015),
-                        Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: screenWidth * 0.075,
+                        Text(
+                          mediaItem.title,
+                          style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
-                          child: Obx(() {
-                            final pos = musicCon.position.value;
-                            final dur = musicCon.duration.value;
-                            String fmt(Duration d) => _formatDuration(d);
-                            return Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  fmt(pos),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                Text(
-                                  fmt(dur),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            );
-                          }),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        SizedBox(height: screenHeight * 0.025),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // Shuffle button
-                            Obx(
-                              () => CupertinoButton(
-                                padding: EdgeInsets.zero,
-                                child: Icon(
-                                  CupertinoIcons.shuffle,
-                                  size: screenHeight * 0.033,
-                                  color:
-                                      musicCon.isShuffling.value
-                                          ? Theme.of(
-                                            context,
-                                          ).colorScheme.primary
-                                          : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                ),
-                                onPressed: musicCon.toggleShuffle,
-                              ),
-                            ),
-                            SizedBox(width: 10),
-                            CupertinoButton(
-                              padding: EdgeInsets.zero,
-                              child: Icon(
-                                CupertinoIcons.backward_end_alt_fill,
-                                size: screenHeight * 0.042,
-                                color:
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                              ),
-                              onPressed: musicCon.prev,
-                            ),
-                            SizedBox(width: screenWidth * 0.24),
-                            CupertinoButton(
-                              padding: EdgeInsets.zero,
-                              child: Icon(
-                                CupertinoIcons.forward_end_alt_fill,
-                                size: screenHeight * 0.042,
-                                color:
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                              ),
-                              onPressed: musicCon.next,
-                            ),
-                            SizedBox(width: 10),
-                            // Repeat button
-                            Obx(
-                              () => CupertinoButton(
-                                padding: EdgeInsets.zero,
-                                child: Icon(
-                                  _getRepeatIcon(musicCon.loopMode.value),
-                                  size: screenHeight * 0.033,
-                                  color:
-                                      musicCon.loopMode.value != LoopMode.off
-                                          ? Theme.of(
-                                            context,
-                                          ).colorScheme.primary
-                                          : Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                ),
-                                onPressed: musicCon.toggleLoopMode,
-                              ),
-                            ),
-                          ],
+                        Text(
+                          mediaItem.artist ?? 'Unknown Artist',
+                          style: TextStyle(
+                            color:
+                                isDark
+                                    ? Colors.white.withOpacity(0.7)
+                                    : Colors.black.withOpacity(0.7),
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
+
+                  // Processing State Icon
+                  StreamBuilder<AudioProcessingState>(
+                    stream:
+                        _audioHandler.playbackState
+                            .map((state) => state.processingState)
+                            .distinct(),
+                    builder: (context, snapshot) {
+                      final processingState =
+                          snapshot.data ?? AudioProcessingState.idle;
+                      return Icon(
+                        _getProcessingIcon(processingState),
+                        color: primaryColor,
+                        size: 20,
+                      );
+                    },
+                  ),
                 ],
               ),
-            ),
-          ),
-          // Loading indicator or Album art
-          Positioned(
-            left: imageLeft,
-            top: imageTop,
-            child: Obx(() {
-              if (musicCon.isLoading.value) {
-                return Container(
-                  height: imageSize,
-                  width: imageSize,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
-                    borderRadius: BorderRadius.circular(imageRadius),
-                  ),
-                  child: Center(
-                    child: CupertinoActivityIndicator(
-                      color: Theme.of(context).colorScheme.onPrimary,
-                    ),
-                  ),
-                );
-              }
 
-              final idx = musicCon.currentIndex.value;
-              final hasSong =
-                  musicCon.songs.isNotEmpty &&
-                  idx >= 0 &&
-                  idx < musicCon.songs.length;
-              final song = hasSong ? musicCon.songs[idx] : null;
+              const SizedBox(height: 10),
 
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(imageRadius),
-                child: Container(
-                  height: imageSize,
-                  width: imageSize,
-                  color: Theme.of(context).colorScheme.primary,
-                  child:
-                      song?.cover != null && song!.cover!.isNotEmpty
-                          ? Image.network(
-                            song.cover!,
-                            width: imageSize,
-                            height: imageSize,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              print("Image load error: $error");
-                              return Icon(
-                                CupertinoIcons.music_note_2,
-                                color: Theme.of(context).colorScheme.onPrimary,
-                                size: imageSize * 0.4,
-                              );
-                            },
-                          )
-                          : Icon(
-                            CupertinoIcons.music_note_2,
-                            color: Theme.of(context).colorScheme.onPrimary,
-                            size: imageSize * 0.4,
+              // Seek Bar and Times
+              StreamBuilder<MediaState>(
+                stream: _mediaStateStream,
+                builder: (context, snapshot) {
+                  final mediaState = snapshot.data;
+                  final position = mediaState?.position ?? Duration.zero;
+                  final duration =
+                      mediaState?.mediaItem?.duration ?? Duration.zero;
+
+                  return Column(
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            _formatDuration(position),
+                            style: TextStyle(
+                              color: inactiveColor,
+                              fontSize: 12,
+                            ),
                           ),
-                ),
-              );
-            }),
-          ),
-          // Title + Artist
-          Positioned(
-            left: textLeft,
-            top: textTop,
-            child: Obx(() {
-              if (musicCon.isLoading.value) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Loading...',
-                      style: TextStyle(
-                        fontSize: titleSize,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    SizedBox(
-                      height:
-                          lerpDouble(screenHeight * 0.004, 0.0, percentage)!,
-                    ),
-                    Text(
-                      'Please wait',
-                      style: TextStyle(
-                        fontSize: artistSize,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                );
-              }
-
-              final idx = musicCon.currentIndex.value;
-              final has =
-                  musicCon.songs.isNotEmpty &&
-                  idx >= 0 &&
-                  idx < musicCon.songs.length;
-              final title = has ? musicCon.songs[idx].title : 'Song Title';
-              final artist = has ? musicCon.songs[idx].artist : 'Artist Name';
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: titleWidth,
-                    child: Text(
-                      overflow: TextOverflow.ellipsis,
-                      title,
-                      style: TextStyle(
-                        fontSize: titleSize,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    height: lerpDouble(screenHeight * 0.004, 0.0, percentage)!,
-                  ),
-                  Text(
-                    artist,
-                    style: TextStyle(
-                      fontSize: artistSize,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              );
-            }),
-          ),
-          // Play button
-          Positioned(
-            left: buttonLeft,
-            top: buttonTop,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: isPlayingVN,
-              builder: (context, playing, _) {
-                return SizedBox(
-                  height: iconSize * 1.65,
-                  width: iconSize * 1.65,
-                  child: FloatingActionButton(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    elevation: 0,
-                    onPressed: () {
-                      musicCon.togglePlayPause();
-                    },
-                    shape:
-                        playing
-                            ? RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                            )
-                            : const CircleBorder(),
-                    child: Icon(
-                      playing ? Icons.pause : Icons.play_arrow,
-                      size: iconSize * 0.8,
-                      color: Theme.of(context).colorScheme.onPrimary,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          // Sleep Timer button
-          Positioned(
-            top: sleeperTop,
-            left: 0,
-            right: 0,
-            child: Obx(() {
-              final timer = musicCon.sleepTimer.value;
-              final hasTimer = timer != null;
-
-              return Opacity(
-                opacity: percentage,
-                child: AnimatedSwitcher(
-                  duration: Duration(milliseconds: 300),
-                  transitionBuilder:
-                      (child, anim) =>
-                          ScaleTransition(scale: anim, child: child),
-                  child:
-                      hasTimer
-                          ? CupertinoButton(
-                            key: ValueKey('timer_text'),
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SeekBar(
+                              // Use the included SeekBar widget
+                              duration: duration,
+                              position: position,
+                              // Customize colors for better theme matching
+                              activeColor: primaryColor,
+                              inactiveColor:
+                                  isDark
+                                      ? Colors.white24
+                                      : Colors.grey.shade300,
+                              onChangeEnd: (newPosition) {
+                                _audioHandler.seek(newPosition);
+                              },
                             ),
-                            borderRadius: BorderRadius.circular(12),
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withOpacity(0.1),
-                            onPressed: () => showSleepTimerDialog(context),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  CupertinoIcons.moon_zzz_fill,
-                                  size: screenHeight * 0.022,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                SizedBox(width: 4),
-                                Text(
-                                  _formatDuration(timer!),
-                                  style: TextStyle(
-                                    fontSize: screenHeight * 0.022,
-                                    fontWeight: FontWeight.bold,
-                                    color:
-                                        Theme.of(context).colorScheme.primary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                          : CupertinoButton(
-                            key: ValueKey('moon_icon'),
-                            padding: EdgeInsets.zero,
-                            child: Icon(
-                              CupertinoIcons.moon_zzz_fill,
-                              size: screenHeight * 0.03,
-                              color:
-                                  Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                            ),
-                            onPressed: () => showSleepTimerDialog(context),
                           ),
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
-  }
-
-  IconData _getRepeatIcon(LoopMode mode) {
-    switch (mode) {
-      case LoopMode.off:
-        return CupertinoIcons.repeat;
-      case LoopMode.one:
-        return CupertinoIcons.repeat_1;
-      case LoopMode.all:
-        return CupertinoIcons.repeat;
-    }
-  }
-
-  void showSleepTimerDialog(BuildContext context) {
-    int selectedIndex = 0;
-
-    showCupertinoDialog(
-      context: context,
-      builder:
-          (BuildContext context) => CupertinoAlertDialog(
-            title: const Text("Sleep Timer"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text("Choose when playback should stop."),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 150,
-                  child: CupertinoPicker(
-                    itemExtent: 32.0,
-                    onSelectedItemChanged: (int index) {
-                      selectedIndex = index;
-                    },
-                    children: List<Widget>.generate(13, (int index) {
-                      if (index == 0) {
-                        return const Center(child: Text('Off'));
-                      }
-                      final minutes = index * 5;
-                      return Center(child: Text('$minutes Minutes'));
-                    }),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              CupertinoDialogAction(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
-              ),
-              CupertinoDialogAction(
-                onPressed: () {
-                  if (selectedIndex > 0) {
-                    final minutes = selectedIndex * 5;
-                    musicCon.setSleepTimer(Duration(minutes: minutes));
-                  } else {
-                    musicCon.setSleepTimer(null);
-                  }
-                  Navigator.pop(context);
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatDuration(duration),
+                            style: TextStyle(
+                              color: inactiveColor,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
                 },
-                isDefaultAction: true,
-                child: const Text("Done"),
+              ),
+
+              // Control Row: Favorite, Previous, Play/Pause, Next, Volume/Queue
+              const SizedBox(height: 10),
+              StreamBuilder<PlaybackState>(
+                stream: _audioHandler.playbackState,
+                builder: (context, playbackSnapshot) {
+                  final playing = playbackSnapshot.data?.playing ?? false;
+                  final queueIndex = playbackSnapshot.data?.queueIndex ?? 0;
+                  final queue = _audioHandler.queue.value;
+                  final hasPrevious = queueIndex > 0;
+                  final hasNext = queueIndex < queue.length - 1;
+
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      // Favorite Star
+                      IconButton(
+                        icon: Icon(
+                          Icons.star_border,
+                          color: inactiveColor,
+                          size: 24,
+                        ),
+                        onPressed: () {
+                          /* Implement favorite/like logic */
+                        },
+                      ),
+
+                      // Previous Button
+                      IconButton(
+                        icon: Icon(
+                          Icons.skip_previous,
+                          color: hasPrevious ? primaryColor : inactiveColor,
+                          size: 36,
+                        ),
+                        onPressed:
+                            hasPrevious ? _audioHandler.skipToPrevious : null,
+                        disabledColor: inactiveColor,
+                      ),
+
+                      // Play/Pause Button (Large size)
+                      IconButton(
+                        icon: Icon(
+                          playing
+                              ? Icons.pause_circle_filled
+                              : Icons.play_circle_fill,
+                          color:
+                              primaryColor, // Highlighted color for main action
+                          size: 48,
+                        ),
+                        onPressed:
+                            playing ? _audioHandler.pause : _audioHandler.play,
+                      ),
+
+                      // Next Button
+                      IconButton(
+                        icon: Icon(
+                          Icons.skip_next,
+                          color: hasNext ? primaryColor : inactiveColor,
+                          size: 36,
+                        ),
+                        onPressed: hasNext ? _audioHandler.skipToNext : null,
+                        disabledColor: inactiveColor,
+                      ),
+
+                      // Queue/More Options Icon
+                      IconButton(
+                        icon: Icon(
+                          Icons.queue_music,
+                          color: inactiveColor,
+                          size: 24,
+                        ),
+                        onPressed: () {
+                          /* Implement queue/settings logic */
+                        },
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  // Refactored method to build the control and scan buttons
+  Widget _buildControlButtons() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ElevatedButton.icon(
+          icon: const Icon(Icons.folder_open),
+          label: const Text('Scan Local Files (Automatic Search)'),
+          onPressed: _startScan,
+        ),
+        const SizedBox(height: 10),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.folder_special),
+          label: const Text('Select Specific Folder and Scan'),
+          onPressed: _selectAndScanFolder,
+        ),
+      ],
+    );
+  }
+
+  // Refactored method to build the music list section with tabs
+  Widget _buildMusicListSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _message ?? 'Local Music Library',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              if (_isScanning)
+                const CircularProgressIndicator()
+              else if (_musicFiles.isNotEmpty)
+                ElevatedButton(
+                  onPressed: _startScan,
+                  child: const Text('Re-scan'),
+                ),
+            ],
+          ),
+        ),
+        const Divider(),
+        SizedBox(
+          // Fixed height is necessary for nested ListView/TabBarView
+          height: 350,
+          child:
+              _isScanning
+                  ? const Center(child: CircularProgressIndicator())
+                  : _musicFiles.isEmpty &&
+                      _message != null &&
+                      !_message!.contains('Found')
+                  ? Center(child: Text(_message!))
+                  : DefaultTabController(
+                    length: 4,
+                    child: Column(
+                      children: [
+                        const TabBar(
+                          tabs: [
+                            Tab(text: 'Songs'),
+                            Tab(text: 'Artists'),
+                            Tab(text: 'Albums'),
+                            Tab(text: 'Online'),
+                          ],
+                        ),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              _buildSongsTab(),
+                              _buildArtistsTab(),
+                              _buildAlbumsTab(),
+                              _buildOnlineTab(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+        ),
+      ],
+    );
+  }
+
+  // Helper to get an icon based on audio processing state
+  IconData _getProcessingIcon(AudioProcessingState state) {
+    switch (state) {
+      case AudioProcessingState.loading:
+      case AudioProcessingState.buffering:
+        return Icons.cached;
+      case AudioProcessingState.ready:
+        return Icons.done;
+      case AudioProcessingState.completed:
+        return Icons.repeat;
+      case AudioProcessingState.idle:
+      case AudioProcessingState.error:
+        return Icons.bar_chart_sharp; // As in original code approximation
+    }
+  }
+}
+
+// --- Data Classes and Utility Widgets ---
+
+// Class to hold both MediaItem and Position for the StreamBuilder
+class MediaState {
+  final MediaItem? mediaItem;
+  final Duration position;
+
+  MediaState(this.mediaItem, this.position);
+}
+
+// Custom SeekBar Widget (Simplified and theme-aware)
+class SeekBar extends StatefulWidget {
+  final Duration duration;
+  final Duration position;
+  final Duration bufferedPosition;
+  final ValueChanged<Duration>? onChangeEnd;
+  final Color activeColor;
+  final Color inactiveColor;
+
+  const SeekBar({
+    super.key,
+    required this.duration,
+    required this.position,
+    this.bufferedPosition = Duration.zero,
+    this.onChangeEnd,
+    required this.activeColor,
+    required this.inactiveColor,
+  });
+
+  @override
+  _SeekBarState createState() => _SeekBarState();
+}
+
+class _SeekBarState extends State<SeekBar> {
+  double? _dragValue;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = min(
+      _dragValue ?? widget.position.inMilliseconds.toDouble(),
+      widget.duration.inMilliseconds.toDouble(),
+    );
+    if (_dragValue != null && !_dragging) {
+      _dragValue = null;
+    }
+    final maxDuration = widget.duration.inMilliseconds.toDouble();
+    final sliderMax = max(1.0, maxDuration);
+
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 3.0, // Thicker track
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
+        overlayColor: widget.activeColor.withOpacity(0.2),
+      ),
+      child: Slider(
+        min: 0.0,
+        max: sliderMax,
+        value: min(value, sliderMax),
+        activeColor: widget.activeColor,
+        inactiveColor: widget.inactiveColor,
+        onChanged: (newValue) {
+          setState(() {
+            _dragging = true;
+            _dragValue = newValue;
+          });
+        },
+        onChangeEnd: (newValue) {
+          _dragging = false;
+          widget.onChangeEnd?.call(Duration(milliseconds: newValue.round()));
+          _dragValue = null; // Reset drag value after seeking
+        },
+      ),
     );
   }
 }
