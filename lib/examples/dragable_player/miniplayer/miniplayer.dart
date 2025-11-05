@@ -3,8 +3,8 @@ library flutter_miniplayer;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:rhythm/miniplayer/miniplayer_will_pop.dart';
-import 'package:rhythm/miniplayer/utils.dart';
+import 'package:rhythm/examples/dragable_player/miniplayer/miniplayer_will_pop.dart';
+import 'package:rhythm/examples/dragable_player/miniplayer/utils.dart';
 
 ///Type definition for the builder function
 typedef Widget MiniplayerBuilder(double height, double percentage);

@@ -1,6 +1,6 @@
 
 
-import 'package:rhythm/miniplayer/miniplayer.dart';
+import 'package:rhythm/examples/dragable_player/miniplayer/miniplayer.dart';
 
 extension SelectedColorExtension on PanelState {
   int get heightCode {

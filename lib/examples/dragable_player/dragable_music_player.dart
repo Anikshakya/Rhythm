@@ -8,7 +8,7 @@ import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:rhythm/miniplayer/miniplayer.dart';
+import 'package:rhythm/examples/dragable_player/miniplayer/miniplayer.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:audio_service/audio_service.dart';
 import 'dart:math';
