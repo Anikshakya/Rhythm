@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import 'package:rhythm/app_config/app_theme.dart';
 // Assuming these imports point to your custom files, keeping them as placeholders
 import 'package:rhythm/custom_audio_handler/audio_scanner_utils.dart'; // Placeholder
 import 'package:rhythm/custom_audio_handler/custom_audio_handler_with_metadata.dart'; // Placeholder
@@ -58,44 +59,13 @@ class MyApp extends StatelessWidget {
       valueListenable: themeNotifier,
       builder: (_, mode, __) {
         return MaterialApp(
+          debugShowCheckedModeBanner: false,
           title: 'Rhythm Player',
           // Define Light Theme
-          theme: ThemeData(
-            primarySwatch: Colors.blue,
-            brightness: Brightness.light,
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-            ),
-            // Customizing for light mode
-            listTileTheme: const ListTileThemeData(iconColor: Colors.grey),
-          ),
+          theme: AppTheme.lightTheme,
+          
           // Define Dark Theme
-          darkTheme: ThemeData(
-            primarySwatch: Colors.blue,
-            brightness: Brightness.dark,
-            scaffoldBackgroundColor: Colors.black,
-            cardColor: Colors.grey[900],
-            dialogBackgroundColor: Colors.grey[850],
-            appBarTheme: AppBarTheme(
-              backgroundColor: Colors.grey[900],
-              foregroundColor: Colors.white,
-            ),
-            // Customizing for dark mode
-            listTileTheme: const ListTileThemeData(iconColor: Colors.blueGrey),
-            textTheme: Typography.whiteMountainView.copyWith(
-              bodyMedium: const TextStyle(color: Colors.white70),
-              bodyLarge: const TextStyle(color: Colors.white),
-              titleMedium: const TextStyle(color: Colors.white),
-            ),
-            dividerColor: Colors.white12,
-            elevatedButtonTheme: ElevatedButtonThemeData(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ),
+          darkTheme: AppTheme.darkTheme,
           themeMode: mode, // Use the dynamically managed theme mode
           home: const MainScreen(),
         );
@@ -561,10 +531,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // --- Main Build Method ---
   @override
   Widget build(BuildContext context) {
-    // Determine if the current theme is dark to adjust colors for the custom player UI
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primaryColor = isDark ? Colors.blueAccent : Colors.blue;
-    final inactiveColor = isDark ? Colors.white.withOpacity(0.4) : Colors.grey;
 
     return Scaffold(
       appBar: AppBar(
@@ -589,7 +555,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // --- Compact Player UI ---
-            _buildCompactPlayer(isDark, primaryColor, inactiveColor),
+            _buildCompactPlayer(),
 
             const Divider(height: 40),
 
@@ -607,11 +573,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   // Refactored method to build the compact player widget
-  Widget _buildCompactPlayer(
-    bool isDark,
-    Color primaryColor,
-    Color inactiveColor,
-  ) {
+  Widget _buildCompactPlayer() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
+    final inactiveColor = theme.colorScheme.onSurface.withOpacity(0.4);
+
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem,
       builder: (context, snapshot) {
@@ -620,13 +587,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           return Center(
             child: Text(
               'Select a track to play.',
-              style: TextStyle(color: isDark ? Colors.white70 : Colors.black54),
+              style: TextStyle(color: inactiveColor),
             ),
           );
         }
 
         Widget artWidget;
-        // Determine the album art widget (simplified for the compact view)
         if (mediaItem.artUri != null) {
           final uri = mediaItem.artUri!;
           if (uri.scheme == 'file') {
@@ -636,7 +602,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               width: 50,
               fit: BoxFit.cover,
               errorBuilder:
-                  (context, error, stackTrace) =>
+                  (_, __, ___) =>
                       Icon(Icons.album, size: 50, color: inactiveColor),
             );
           } else {
@@ -646,7 +612,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               width: 50,
               fit: BoxFit.cover,
               errorBuilder:
-                  (context, error, stackTrace) =>
+                  (_, __, ___) =>
                       Icon(Icons.album, size: 50, color: inactiveColor),
             );
           }
@@ -655,16 +621,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
 
         return Container(
-          padding: const EdgeInsets.all(12.0),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color:
                 isDark
-                    ? Colors.grey[900]
-                    : Colors.blueGrey[50], // Theme-appropriate background
-            borderRadius: BorderRadius.circular(16.0),
+                    ? Colors.black.withValues(alpha: 0.8)
+                    : AppTheme.lightTheme.cardColor.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
+                color: inactiveColor.withOpacity(0.2),
                 blurRadius: 10,
                 spreadRadius: 2,
               ),
@@ -673,55 +639,36 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Top Row: Album Art, Title/Artist, Status Icon
+              // Top Row: Art + Title/Artist + Status Icon
               Row(
                 children: [
-                  // Album Art
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(6.0),
+                    borderRadius: BorderRadius.circular(6),
                     child: Container(
                       height: 50,
                       width: 50,
-                      color:
-                          isDark ? Colors.grey.shade800 : Colors.grey.shade300,
+                      color: inactiveColor.withOpacity(0.1),
                       child: artWidget,
                     ),
                   ),
                   const SizedBox(width: 10),
-
-                  // Title and Artist
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
                           mediaItem.title,
-                          style: TextStyle(
-                            color: isDark ? Colors.white : Colors.black,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
                           mediaItem.artist ?? 'Unknown Artist',
-                          style: TextStyle(
-                            color:
-                                isDark
-                                    ? Colors.white.withOpacity(0.7)
-                                    : Colors.black.withOpacity(0.7),
-                            fontSize: 14,
-                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-
-                  // Processing State Icon
                   StreamBuilder<AudioProcessingState>(
                     stream:
                         _audioHandler.playbackState
@@ -732,17 +679,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           snapshot.data ?? AudioProcessingState.idle;
                       return Icon(
                         _getProcessingIcon(processingState),
-                        color: primaryColor,
                         size: 20,
+                        color: inactiveColor,
                       );
                     },
                   ),
                 ],
               ),
-
               const SizedBox(height: 10),
 
-              // Seek Bar and Times
+              // SeekBar
               StreamBuilder<MediaState>(
                 stream: _mediaStateStream,
                 builder: (context, snapshot) {
@@ -751,102 +697,75 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   final duration =
                       mediaState?.mediaItem?.duration ?? Duration.zero;
 
-                  return Column(
+                  return Row(
                     children: [
-                      Row(
-                        children: [
-                          Text(
-                            _formatDuration(position),
-                            style: TextStyle(
-                              color: inactiveColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: SeekBar(
-                              // Use the included SeekBar widget
-                              duration: duration,
-                              position: position,
-                              // Customize colors for better theme matching
-                              activeColor: primaryColor,
-                              inactiveColor:
-                                  isDark
-                                      ? Colors.white24
-                                      : Colors.grey.shade300,
-                              onChangeEnd: (newPosition) {
-                                _audioHandler.seek(newPosition);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _formatDuration(duration),
-                            style: TextStyle(
-                              color: inactiveColor,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                      Text(
+                        _formatDuration(position),
+                        style: TextStyle(color: inactiveColor, fontSize: 12),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SeekBar(
+                          duration: duration,
+                          position: position,
+                          activeColor: primaryColor,
+                          inactiveColor: inactiveColor.withOpacity(0.3),
+                          onChangeEnd: (newPos) => _audioHandler.seek(newPos),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _formatDuration(duration),
+                        style: TextStyle(color: inactiveColor, fontSize: 12),
                       ),
                     ],
                   );
                 },
               ),
-
-              // Control Row: Favorite, Previous, Play/Pause, Next, Volume/Queue
               const SizedBox(height: 10),
+
+              // Control Row
               StreamBuilder<PlaybackState>(
                 stream: _audioHandler.playbackState,
-                builder: (context, playbackSnapshot) {
-                  final playing = playbackSnapshot.data?.playing ?? false;
-                  final queueIndex = playbackSnapshot.data?.queueIndex ?? 0;
+                builder: (context, snapshot) {
+                  final playback = snapshot.data;
+                  final playing = playback?.playing ?? false;
+                  final queueIndex = playback?.queueIndex ?? 0;
                   final queue = _audioHandler.queue.value;
-                  final hasPrevious = queueIndex > 0;
+                  final hasPrev = queueIndex > 0;
                   final hasNext = queueIndex < queue.length - 1;
 
                   return Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      // Favorite Star
                       IconButton(
                         icon: Icon(
                           Icons.star_border,
                           color: inactiveColor,
                           size: 24,
                         ),
-                        onPressed: () {
-                          /* Implement favorite/like logic */
-                        },
+                        onPressed: () {},
                       ),
-
-                      // Previous Button
                       IconButton(
                         icon: Icon(
                           Icons.skip_previous,
-                          color: hasPrevious ? primaryColor : inactiveColor,
+                          color: hasPrev ? primaryColor : inactiveColor,
                           size: 36,
                         ),
                         onPressed:
-                            hasPrevious ? _audioHandler.skipToPrevious : null,
-                        disabledColor: inactiveColor,
+                            hasPrev ? _audioHandler.skipToPrevious : null,
                       ),
-
-                      // Play/Pause Button (Large size)
                       IconButton(
                         icon: Icon(
                           playing
                               ? Icons.pause_circle_filled
                               : Icons.play_circle_fill,
-                          color:
-                              primaryColor, // Highlighted color for main action
+                          color: primaryColor,
                           size: 48,
                         ),
                         onPressed:
                             playing ? _audioHandler.pause : _audioHandler.play,
                       ),
-
-                      // Next Button
                       IconButton(
                         icon: Icon(
                           Icons.skip_next,
@@ -854,19 +773,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           size: 36,
                         ),
                         onPressed: hasNext ? _audioHandler.skipToNext : null,
-                        disabledColor: inactiveColor,
                       ),
-
-                      // Queue/More Options Icon
                       IconButton(
                         icon: Icon(
                           Icons.queue_music,
                           color: inactiveColor,
                           size: 24,
                         ),
-                        onPressed: () {
-                          /* Implement queue/settings logic */
-                        },
+                        onPressed: () {},
                       ),
                     ],
                   );
@@ -878,6 +792,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
     );
   }
+
 
   // Refactored method to build the control and scan buttons
   Widget _buildControlButtons() {
