@@ -15,6 +15,8 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
   final _player = AudioPlayer();
   final _playlist = ConcatenatingAudioSource(children: []);
 
+  bool _isSettingSource = false;
+
   /// Initialise our audio handler.
   CustomAudioHandler() {
     // 1. Pipe player events to audio_service state
@@ -44,6 +46,8 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
 
     // 4. Update mediaItem when the current index changes (for playlists)
     _player.sequenceStateStream.listen((state) {
+      if (_isSettingSource)
+        return; // Ignore updates during source setting to prevent glitches
       final index = state.currentIndex ?? 0;
       final currentQueue = queue.value;
       if (index < currentQueue.length) {
@@ -77,6 +81,7 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
     final items = <MediaItem>[];
     final sources = <AudioSource>[];
     final tempDir = await getTemporaryDirectory();
+    final artWrites = <Future<void>>[];
     for (int i = 0; i < songs.length; i++) {
       final song = songs[i];
       final localUri = Uri.file(song.file.path);
@@ -88,7 +93,9 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
           final artFile = File(
             '${tempDir.path}/art_${song.file.path.hashCode}.jpg',
           );
-          await artFile.writeAsBytes(song.meta.albumArt!);
+          if (!await artFile.exists()) {
+            artWrites.add(artFile.writeAsBytes(song.meta.albumArt!));
+          }
           artUri = Uri.file(artFile.path);
         }
       }
@@ -103,6 +110,9 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
       items.add(localItem);
       sources.add(AudioSource.uri(localUri, tag: localItem));
     }
+    await Future.wait(
+      artWrites,
+    ); // Parallelize art file writes for better performance
     await loadPlaylist(items, sources, initialIndex: startIndex);
   }
 
@@ -121,12 +131,30 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
     List<AudioSource> sources, {
     int initialIndex = 0,
   }) async {
+    _isSettingSource = true; // Flag to prevent glitchy mediaItem updates
     await _playlist.clear();
     await _playlist.addAll(sources);
     queue.add(items);
     await _player.setAudioSource(_playlist, initialIndex: initialIndex);
-    mediaItem.add(items[initialIndex]);
+    mediaItem.add(items[initialIndex]); // Manually set after source is ready
+    _isSettingSource = false;
     play();
+  }
+
+  // Method to set repeat mode
+  @override
+  Future<void> setRepeatMode(AudioServiceRepeatMode  mode) async {
+    await _player.setLoopMode(switch (mode) {
+      AudioServiceRepeatMode .none => LoopMode.off,
+      AudioServiceRepeatMode .all => LoopMode.all,
+      AudioServiceRepeatMode .one => LoopMode.one,
+      AudioServiceRepeatMode .group => LoopMode.off, // Not used
+    });
+  }
+
+  // Method to toggle shuffle mode
+  Future<void> toggleShuffle() async {
+    await _player.setShuffleModeEnabled(!_player.shuffleModeEnabled);
   }
 
   @override
@@ -161,8 +189,9 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Transform a just_audio event into an audio_service state.
   PlaybackState _transformEvent(PlaybackEvent event) {
-    final hasPrevious = _player.hasPrevious;
-    final hasNext = _player.hasNext;
+    final hasPrevious =
+        (_player.loopMode != LoopMode.one) && _player.hasPrevious;
+    final hasNext = (_player.loopMode != LoopMode.one) && _player.hasNext;
     final playPauseControl =
         _player.playing ? MediaControl.pause : MediaControl.play;
 
@@ -210,6 +239,13 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
       bufferedPosition: _player.bufferedPosition,
       speed: _player.speed,
       queueIndex: event.currentIndex,
+      repeatMode: switch (_player.loopMode) {
+        LoopMode.off => AudioServiceRepeatMode.none,
+        LoopMode.all => AudioServiceRepeatMode.all,
+        LoopMode.one => AudioServiceRepeatMode.one,
+      },
+      shuffleMode: _player.shuffleModeEnabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      // shuffleIndices: _player.shuffleIndices,
     );
   }
 }

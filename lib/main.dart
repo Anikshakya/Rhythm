@@ -63,7 +63,7 @@ class MyApp extends StatelessWidget {
           title: 'Rhythm Player',
           // Define Light Theme
           theme: AppTheme.lightTheme,
-          
+
           // Define Dark Theme
           darkTheme: AppTheme.darkTheme,
           themeMode: mode, // Use the dynamically managed theme mode
@@ -93,6 +93,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _message;
   String? _currentId;
   StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  // Notifiers for optimistic UI updates
+  late ValueNotifier<AudioServiceRepeatMode> _repeatModeNotifier;
+  late ValueNotifier<bool> _shuffleNotifier;
 
   // Static list of online songs (used for demo/testing)
   static final List<MediaItem> _onlineItems = [
@@ -126,6 +130,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
+    _repeatModeNotifier = ValueNotifier(AudioServiceRepeatMode.none);
+    _shuffleNotifier = ValueNotifier(false);
+
+    // Listen to playback state to update notifiers
+    _audioHandler.playbackState.listen((state) {
+      _repeatModeNotifier.value = state.repeatMode;
+      _shuffleNotifier.value = state.shuffleMode == AudioServiceShuffleMode.all;
+    });
+
     // Subscribe to media item changes to update the current ID and save state
     _mediaItemSubscription = _audioHandler.mediaItem.listen((item) {
       _saveCurrentState();
@@ -146,6 +159,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     _mediaItemSubscription?.cancel();
+    _repeatModeNotifier.dispose();
+    _shuffleNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -531,7 +546,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // --- Main Build Method ---
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Rhythm Audio Player'),
@@ -731,20 +745,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   final playback = snapshot.data;
                   final playing = playback?.playing ?? false;
                   final queueIndex = playback?.queueIndex ?? 0;
-                  final queue = _audioHandler.queue.value;
-                  final hasPrev = queueIndex > 0;
-                  final hasNext = queueIndex < queue.length - 1;
+                  final queueLength = _audioHandler.queue.value.length;
+                  final repeatMode = _repeatModeNotifier.value;
+                  final shuffleEnabled = _shuffleNotifier.value;
+
+                  final hasPrev =
+                      (repeatMode != AudioServiceRepeatMode.one) && queueIndex > 0;
+                  final hasNext =
+                      (repeatMode != AudioServiceRepeatMode.one) &&
+                      queueIndex < queueLength - 1;
 
                   return Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       IconButton(
                         icon: Icon(
-                          Icons.star_border,
-                          color: inactiveColor,
+                          shuffleEnabled ? Icons.shuffle_on : Icons.shuffle,
+                          color: shuffleEnabled ? primaryColor : inactiveColor,
                           size: 24,
                         ),
-                        onPressed: () {},
+                        onPressed: () {
+                          final current = shuffleEnabled;
+                          _shuffleNotifier.value = !current;
+                          (_audioHandler as CustomAudioHandler)
+                              .toggleShuffle()
+                              .catchError((e) {
+                                _shuffleNotifier.value = current;
+                              });
+                        },
                       ),
                       IconButton(
                         icon: Icon(
@@ -776,11 +804,29 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       ),
                       IconButton(
                         icon: Icon(
-                          Icons.queue_music,
-                          color: inactiveColor,
+                          repeatMode == AudioServiceRepeatMode.one
+                              ? Icons.repeat_one
+                              : Icons.repeat,
+                          color:
+                              repeatMode != AudioServiceRepeatMode.none
+                                  ? primaryColor
+                                  : inactiveColor,
                           size: 24,
                         ),
-                        onPressed: () {},
+                        onPressed: () {
+                          final current = repeatMode;
+                          final next = switch (current) {
+                            AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+                            AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+                            _ => AudioServiceRepeatMode.none,
+                          };
+                          _repeatModeNotifier.value = next;
+                          (_audioHandler as CustomAudioHandler)
+                              .setRepeatMode(next)
+                              .catchError((e) {
+                                _repeatModeNotifier.value = current;
+                              });
+                        },
                       ),
                     ],
                   );
@@ -792,7 +838,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
     );
   }
-
 
   // Refactored method to build the control and scan buttons
   Widget _buildControlButtons() {
