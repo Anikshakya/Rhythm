@@ -433,7 +433,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Build tab for artists with horizontal scroll for artists
+  // Build tab for artists
   Widget _buildArtistsTab() {
     if (_musicFiles.isEmpty) {
       return const Center(child: Text('No local artists found.'));
@@ -448,49 +448,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       itemBuilder: (context, index) {
         final artist = artistList[index];
         final songs = artists[artist]!;
-        final artUri = _getArtistArt(songs);
-        return Card(
-          elevation: 2,
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          child: ExpansionTile(
-            leading:
-                artUri != null
-                    ? CircleAvatar(
-                      backgroundImage: FileImage(File(artUri.path)),
-                    )
-                    : const CircleAvatar(child: Icon(Icons.person)),
-            title: Text(artist),
-            children:
-                songs.map((song) {
-                  final songId = Uri.file(song.file.path).toString();
-                  Widget leading = const Icon(Icons.music_note);
-                  if (song.meta.artUri != null) {
-                    leading = CircleAvatar(
-                      backgroundImage: FileImage(File(song.meta.artUri!.path)),
-                    );
-                  } else if (song.meta.albumArt != null) {
-                    leading = CircleAvatar(
-                      backgroundImage: MemoryImage(song.meta.albumArt!),
-                    );
-                  }
-                  return ListTile(
-                    leading: leading,
-                    title: Text(song.meta.title),
-                    subtitle: Text(song.meta.album),
-                    trailing:
-                        _isCurrent(songId)
-                            ? const Icon(Icons.volume_up, color: Colors.blue)
-                            : null,
-                    onTap: () => _playLocalSongs(songs, songs.indexOf(song)),
-                  );
-                }).toList(),
-          ),
+        return ListTile(
+          title: Text(artist),
+          subtitle: Text('${songs.length} songs'),
+          onTap:
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) =>
+                          ArtistDetailScreen(artist: artist, songs: songs),
+                ),
+              ),
         );
       },
     );
   }
 
-  // Build tab for albums with horizontal scroll for album covers
+  // Build tab for albums with grid view
   Widget _buildAlbumsTab() {
     if (_musicFiles.isEmpty) {
       return const Center(child: Text('No local albums found.'));
@@ -500,113 +475,69 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       albums.putIfAbsent(song.meta.album, () => []).add(song);
     }
     final albumList = albums.keys.toList()..sort();
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(8.0),
-            child: Text(
-              'Albums',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-          ),
-          SizedBox(
-            height: 200,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: albumList.length,
-              itemBuilder: (context, index) {
-                final album = albumList[index];
-                final songs = albums[album]!;
-                final artUri = _getAlbumArt(songs);
-                return GestureDetector(
-                  onTap: () {
-                    // Optionally navigate to album details or play
-                    _playLocalSongs(songs, 0);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 150,
-                          height: 150,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            image:
-                                artUri != null
-                                    ? DecorationImage(
-                                      image: FileImage(File(artUri.path)),
-                                      fit: BoxFit.cover,
-                                    )
-                                    : null,
-                            color: Colors.grey[300],
-                          ),
-                          child:
-                              artUri == null
-                                  ? const Icon(Icons.album, size: 80)
-                                  : null,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          album,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 16),
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: albumList.length,
-            itemBuilder: (context, index) {
-              final album = albumList[index];
-              final songs = albums[album]!;
-              return ExpansionTile(
-                title: Text(album),
-                children:
-                    songs.map((song) {
-                      final songId = Uri.file(song.file.path).toString();
-                      Widget leading = const Icon(Icons.music_note);
-                      if (song.meta.artUri != null) {
-                        leading = CircleAvatar(
-                          backgroundImage: FileImage(
-                            File(song.meta.artUri!.path),
-                          ),
-                        );
-                      } else if (song.meta.albumArt != null) {
-                        leading = CircleAvatar(
-                          backgroundImage: MemoryImage(song.meta.albumArt!),
-                        );
-                      }
-                      return ListTile(
-                        leading: leading,
-                        title: Text(song.meta.title),
-                        subtitle: Text(song.meta.artist),
-                        trailing:
-                            _isCurrent(songId)
-                                ? const Icon(
-                                  Icons.volume_up,
-                                  color: Colors.blue,
-                                )
-                                : null,
-                        onTap:
-                            () => _playLocalSongs(songs, songs.indexOf(song)),
-                      );
-                    }).toList(),
-              );
-            },
-          ),
-        ],
+    return GridView.builder(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.8,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
       ),
+      itemCount: albumList.length,
+      itemBuilder: (context, index) {
+        final album = albumList[index];
+        final songs = albums[album]!;
+        final artUri = _getAlbumArt(songs);
+        final artist = songs.first.meta.artist;
+        return GestureDetector(
+          onTap:
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => AlbumDetailScreen(
+                        album: album,
+                        artist: artist,
+                        songs: songs,
+                        artUri: artUri,
+                      ),
+                ),
+              ),
+          child: Column(
+            children: [
+              Container(
+                height: 120,
+                width: 120,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  image:
+                      artUri != null
+                          ? DecorationImage(
+                            image: FileImage(File(artUri.path)),
+                            fit: BoxFit.cover,
+                          )
+                          : null,
+                  color: Colors.grey[300],
+                ),
+                child:
+                    artUri == null ? const Icon(Icons.album, size: 60) : null,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                album,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -991,6 +922,167 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       AudioProcessingState.completed => Icons.repeat,
       _ => Icons.error,
     };
+  }
+}
+
+/// Screen for artist details
+class ArtistDetailScreen extends StatelessWidget {
+  final String artist;
+  final List<SongInfo> songs;
+
+  const ArtistDetailScreen({
+    super.key,
+    required this.artist,
+    required this.songs,
+  });
+
+  Uri? _getArtistArt() {
+    if (songs.isEmpty) return null;
+    final song = songs.first;
+    return song.meta.artUri ??
+        (song.meta.albumArt != null
+            ? Uri.file(
+              '${(getTemporaryDirectory())}/art_${song.file.path.hashCode}.jpg',
+            )
+            : null);
+  }
+
+  void _playSongs(int index, {bool shuffle = false}) {
+    final handler = _audioHandler as CustomAudioHandler;
+    if (shuffle) {
+      handler.toggleShuffle();
+    }
+    handler.playLocalPlaylist(songs, index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final artUri = _getArtistArt();
+    return Scaffold(
+      appBar: AppBar(title: Text(artist)),
+      body: Column(
+        children: [
+          if (artUri != null)
+            Image.file(
+              File(artUri.path),
+              height: 200,
+              width: 200,
+              fit: BoxFit.cover,
+            ),
+          Text(artist, style: Theme.of(context).textTheme.headlineMedium),
+          Text(
+            '${songs.length} songs',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton(
+                onPressed: () => _playSongs(0),
+                child: const Text('Play'),
+              ),
+              const SizedBox(width: 16),
+              ElevatedButton(
+                onPressed: () => _playSongs(0, shuffle: true),
+                child: const Text('Shuffle'),
+              ),
+            ],
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: songs.length,
+              itemBuilder: (context, index) {
+                final song = songs[index];
+                return ListTile(
+                  title: Text(song.meta.title),
+                  subtitle: Text(song.meta.album),
+                  onTap: () => _playSongs(index),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Screen for album details
+class AlbumDetailScreen extends StatelessWidget {
+  final String album;
+  final String artist;
+  final List<SongInfo> songs;
+  final Uri? artUri;
+
+  const AlbumDetailScreen({
+    super.key,
+    required this.album,
+    required this.artist,
+    required this.songs,
+    this.artUri,
+  });
+
+  void _playSongs(int index, {bool shuffle = false}) {
+    final handler = _audioHandler as CustomAudioHandler;
+    if (shuffle) {
+      handler.toggleShuffle();
+    }
+    handler.playLocalPlaylist(songs, index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 300,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(album),
+              background:
+                  artUri != null
+                      ? Image.file(File(artUri!.path), fit: BoxFit.cover)
+                      : const Center(child: Icon(Icons.album, size: 100)),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(artist, style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      FilledButton(
+                        onPressed: () => _playSongs(0),
+                        child: const Text('Play'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: () => _playSongs(0, shuffle: true),
+                        child: const Text('Shuffle'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final song = songs[index];
+              return ListTile(
+                leading: Text('${index + 1}'),
+                title: Text(song.meta.title),
+                onTap: () => _playSongs(index),
+              );
+            }, childCount: songs.length),
+          ),
+        ],
+      ),
+    );
   }
 }
 
