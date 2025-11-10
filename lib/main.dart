@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:audio_service/audio_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
@@ -27,6 +28,7 @@ ValueNotifier<AudioServiceRepeatMode> repeatModeNotifier = ValueNotifier(
   AudioServiceRepeatMode.none,
 );
 ValueNotifier<bool> shuffleNotifier = ValueNotifier(false);
+ValueNotifier<bool> _showBlurImagePlayerBg = ValueNotifier(false);
 ValueNotifier<bool> _showFullPlayer = ValueNotifier(false);
 
 // Entry point of the application
@@ -646,7 +648,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       return const Center(child: Text('No matching albums found.'));
     }
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.only(bottom: 210, top: 20), 
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.8,
@@ -761,50 +763,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       length: 5,
       child: Scaffold(
         key: _scaffoldKey,
-        drawer: Drawer(
-          child: ListView(
-            padding: const EdgeInsets.only(
-              bottom: 210,
-            ), // To Avoid Miniplayer Overlap
-            children: <Widget>[
-              DrawerHeader(
-                decoration: BoxDecoration(color: theme.primaryColor),
-                child: const Text(
-                  'Settings',
-                  style: TextStyle(color: Colors.white, fontSize: 24),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.search),
-                title: const Text('Scan Local Files (Automatic)'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _startScan();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('Select Folder to Scan'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _selectAndScanFolder();
-                },
-              ),
-              const Divider(),
-              ListTile(
-                leading: Icon(
-                  themeNotifier.value == ThemeMode.dark
-                      ? Icons.light_mode
-                      : Icons.dark_mode,
-                ),
-                title: const Text('Toggle Theme'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleTheme();
-                },
-              ),
-            ],
-          ),
+        drawer: AppDrawer(
+          themeNotifier: themeNotifier,
+          showBlurImagePlayerBg: _showBlurImagePlayerBg,
+          startScan: _startScan,
+          selectAndScanFolder: _selectAndScanFolder,
+          toggleTheme: _toggleTheme,
         ),
         body: Stack(
           children: [
@@ -832,7 +796,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           child: TextField(
                             decoration: InputDecoration(
                               hintText: 'Search songs, playlists, and artists',
-                              suffixIcon: const Icon(Icons.mic),
+                              suffixIcon: const Icon(Icons.search_rounded),
                               contentPadding: const EdgeInsets.only(
                                 top: 5,
                                 left: 15,
@@ -904,6 +868,98 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 }
+
+// App Drawer
+
+class AppDrawer extends StatelessWidget {
+  final ValueNotifier<ThemeMode> themeNotifier;
+  final ValueNotifier<bool> showBlurImagePlayerBg;
+  final VoidCallback _startScan;
+  final VoidCallback _selectAndScanFolder;
+  final VoidCallback _toggleTheme;
+
+  const AppDrawer({
+    super.key,
+    required this.themeNotifier,
+    required this.showBlurImagePlayerBg,
+    required VoidCallback startScan,
+    required VoidCallback selectAndScanFolder,
+    required VoidCallback toggleTheme,
+  })  : _startScan = startScan,
+        _selectAndScanFolder = selectAndScanFolder,
+        _toggleTheme = toggleTheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 210),
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: const Text('Scan Local Files (Automatic)'),
+              onTap: () {
+                Navigator.pop(context);
+                _startScan();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder),
+              title: const Text('Select Folder to Scan'),
+              onTap: () {
+                Navigator.pop(context);
+                _selectAndScanFolder();
+              },
+            ),
+            const Divider(),
+            // 🌙 Toggle Theme
+            ValueListenableBuilder<ThemeMode>(
+              valueListenable: themeNotifier,
+              builder: (context, mode, _) {
+                return ListTile(
+                  leading: Icon(
+                    mode == ThemeMode.dark
+                        ? Icons.light_mode
+                        : Icons.dark_mode,
+                  ),
+                  title: const Text('Dark Mode'),
+                  trailing: CupertinoSwitch(
+                    value: mode == ThemeMode.dark,
+                    onChanged: (value) {
+                      _toggleTheme();
+                    },
+                  ),
+                );
+              },
+            ),
+            // 🖼️ Toggle Blur Image Player Background
+            ValueListenableBuilder<bool>(
+              valueListenable: showBlurImagePlayerBg,
+              builder: (context, value, _) {
+                return ListTile(
+                  leading: Icon(
+                    value
+                        ? Icons.image_not_supported_outlined
+                        : Icons.image_rounded,
+                  ),
+                  title: const Text('Show Image On Bg of Player'),
+                  trailing: CupertinoSwitch(
+                    value: value,
+                    onChanged: (newValue) {
+                      showBlurImagePlayerBg.value = newValue;
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 /// Search screen for handling search functionality
 class SearchScreen extends StatefulWidget {
@@ -1087,7 +1143,10 @@ class _SearchScreenState extends State<SearchScreen> {
       return const Center(child: Text('No matching albums found.'));
     }
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.only(
+        bottom: 210,
+        top: 20
+      ), // To Avoid Miniplayer Overlap
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 0.8,
@@ -1221,7 +1280,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         right: 5,
                       ),
                       hintText: 'Search songs, playlists, and artists',
-                      suffixIcon: const Icon(Icons.mic),
+                      suffixIcon: const Icon(Icons.search_rounded),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(30.0),
                       ),
@@ -1805,52 +1864,101 @@ class _GlobalWrapperState extends State<GlobalWrapper> {
   }
 }
 
+
 class FullScreenPlayer extends StatelessWidget {
   const FullScreenPlayer({super.key});
 
   void _onBack() {
     Get.back();
-    // Assuming _showFullPlayer is accessible and reactive
-    _showFullPlayer.value = false;
+    _showFullPlayer.value = false; // reactive close flag
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult:(didPop, result) {
-        _onBack(); 
-      },
+      onPopInvokedWithResult: (didPop, result) => _onBack(),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: GestureDetector(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Theme.of(context).scaffoldBackgroundColor.withOpacity(.9),
-                    Theme.of(context).scaffoldBackgroundColor,
-                  ],
+        body: StreamBuilder<MediaItem?>(
+          stream: _audioHandler.mediaItem.stream,
+          builder: (_, snap) {
+            final item = snap.data;
+            if (item == null) return const SizedBox.shrink();
+
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                
+                /// 🪞 BLURRED BACKGROUND IMAGE
+                if (item.artUri != null)
+                ValueListenableBuilder<bool>(
+                    valueListenable: _showBlurImagePlayerBg,
+                    builder:
+                        (_, value, __) => AnimatedSwitcher(
+                          duration: 300.milliseconds,
+                          child:
+                              value
+                                  ? ImageFiltered(
+                                    imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                                    child: Image.file(
+                                      height: double.infinity,
+                                      width: double.infinity,
+                                      File(item.artUri!.toFilePath()),
+                                      fit: BoxFit.cover,
+                                    ),
+                                  )
+                                  : const SizedBox.shrink(),
+                        ),
+                  ),
+                Container(
+                  color: Theme.of(context)
+                      .scaffoldBackgroundColor
+                      .withOpacity(0.4), // subtle overlay
                 ),
-              ),
-              child: SafeArea(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    IconButton(onPressed: (){
-                      _onBack();
-                      }, 
-                      icon: Icon(Icons.keyboard_arrow_down_rounded, size: 35,)
-                    ), 
-                    Expanded(child: _PlayerBody())],
+
+                /// 🎧 PLAYER BODY
+                SafeArea(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      /// Top Controls
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 35,
+                              ),
+                              onPressed: _onBack,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.timer_outlined, size: 28),
+                              onPressed: () {
+                                // TODO: open your sleep timer dialog
+                                Get.snackbar(
+                                  'Sleep Timer',
+                                  'Open sleep timer settings here.',
+                                  snackPosition: SnackPosition.BOTTOM,
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      /// Player content
+                      const Expanded(child: _PlayerBody()),
+                    ],
+                  ),
                 ),
-              ),
-            ),
-          ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1858,41 +1966,65 @@ class FullScreenPlayer extends StatelessWidget {
 }
 
 class _PlayerBody extends StatelessWidget {
+  const _PlayerBody();
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
       builder: (_, snap) {
         final item = snap.data;
         if (item == null) return const SizedBox.shrink();
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             children: [
               const Spacer(flex: 2),
-              // LARGE ART
-              Container(
-                width: MediaQuery.sizeOf(context).width * .75,
-                height: MediaQuery.sizeOf(context).width * .75,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      blurRadius: 30,
-                      spreadRadius: 4,
-                      color: Theme.of(context).shadowColor.withOpacity(.3),
+
+              /// 🎶 ALBUM ART WITH SHRINK ANIMATION
+              StreamBuilder<PlaybackState>(
+                stream: _audioHandler.playbackState,
+                builder: (_, stateSnap) {
+                  final playing = stateSnap.data?.playing ?? false;
+
+                  return AnimatedScale(
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOut,
+                    scale: playing ? 1.0 : 0.7, // shrink slightly when paused
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 400),
+                      opacity: playing ? 1 : 0.9,
+                      child: Container(
+                        width: MediaQuery.sizeOf(context).width * .75,
+                        height: MediaQuery.sizeOf(context).width * .75,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              blurRadius: 30,
+                              spreadRadius: 4,
+                              color:
+                                  Theme.of(context).shadowColor.withOpacity(.3),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: MiniPlayer()._art(item, double.infinity),
+                        ),
+                      ),
                     ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: MiniPlayer()._art(item, double.infinity),
-                ),
+                  );
+                },
               ),
+
               const Spacer(),
-              // TITLE + ARTIST
+
+              /// Title & Artist
               Text(
                 item.title,
                 textAlign: TextAlign.center,
@@ -1906,8 +2038,10 @@ class _PlayerBody extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyLarge?.copyWith(color: inactive),
               ),
+
               const Spacer(),
-              // SEEK-BAR
+
+              /// Seekbar
               StreamBuilder<MediaState>(
                 stream: rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
                   _audioHandler.mediaItem.stream,
@@ -1946,9 +2080,12 @@ class _PlayerBody extends StatelessWidget {
                   );
                 },
               ),
+
               const Spacer(),
-              // CONTROLS
+
+              /// Controls
               _Controls(),
+
               const Spacer(flex: 2),
             ],
           ),
