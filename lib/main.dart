@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 import 'package:audio_service/audio_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
@@ -26,6 +27,7 @@ ValueNotifier<AudioServiceRepeatMode> repeatModeNotifier = ValueNotifier(
   AudioServiceRepeatMode.none,
 );
 ValueNotifier<bool> shuffleNotifier = ValueNotifier(false);
+ValueNotifier<bool> _showFullPlayer = ValueNotifier(false);
 
 // Entry point of the application
 Future<void> main() async {
@@ -1346,67 +1348,58 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 /// Mini player widget that can be used across screens
 class MiniPlayer extends StatelessWidget {
   MiniPlayer({super.key});
-  // Combined stream for media item and position
   Stream<MediaState> get _mediaStateStream =>
       rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
         _audioHandler.mediaItem.stream,
         AudioService.position,
-        (mediaItem, position) => MediaState(mediaItem, position),
+        (item, pos) => MediaState(item, pos),
       );
+
+  Widget _art(MediaItem item, double size) {
+    final uri = item.artUri;
+    Widget image = Icon(Icons.album, size: size, color: Colors.grey);
+    if (uri != null) {
+      image =
+          uri.scheme == 'file'
+              ? Image.file(
+                File(uri.path),
+                height: size,
+                width: size,
+                fit: BoxFit.cover,
+              )
+              : CachedNetworkImage(
+                imageUrl: uri.toString(),
+                height: size,
+                width: size,
+                fit: BoxFit.cover,
+              );
+    }
+    return ClipRRect(borderRadius: BorderRadius.circular(8), child: image);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final primaryColor = theme.colorScheme.primary;
-    final inactiveColor = theme.colorScheme.onSurface.withOpacity(0.4);
-    final isDark = theme.brightness == Brightness.dark;
+    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
-      builder: (context, snapshot) {
-        final mediaItem = snapshot.data;
-        if (mediaItem == null) {
-          return const SizedBox.shrink();
-        }
-        Widget artWidget = Icon(Icons.album, size: 50, color: inactiveColor);
-        if (mediaItem.artUri != null) {
-          final uri = mediaItem.artUri!;
-          artWidget =
-              uri.scheme == 'file'
-                  ? Image.file(
-                    File(uri.path),
-                    height: 40,
-                    width: 50,
-                    fit: BoxFit.cover,
-                    errorBuilder:
-                        (_, __, ___) =>
-                            Icon(Icons.album, size: 50, color: inactiveColor),
-                  )
-                  : CachedNetworkImage(
-                    imageUrl: uri.toString(),
-                    height: 40,
-                    width: 50,
-                    fit: BoxFit.cover,
-                    errorWidget:
-                        (_, __, ___) =>
-                            Icon(Icons.album, size: 50, color: inactiveColor),
-                  );
-        }
+      builder: (_, snap) {
+        final item = snap.data;
+        if (item == null) return const SizedBox.shrink();
         return GestureDetector(
           onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Tap to expand full player')),
-            );
+            _showFullPlayer.value = true;
+            Get.to(() => FullScreenPlayer());
           },
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(26),
-              color:
-                  isDark
-                      ? Colors.black.withOpacity(0.9)
-                      : AppTheme.lightTheme.cardColor.withOpacity(0.9),
+              color: theme.brightness ==
+                  Brightness.dark ? const Color.fromARGB(255, 18, 18, 18).withValues(alpha: 0.92) : theme.cardColor.withOpacity(.9),
               boxShadow: [
                 BoxShadow(
-                  color: inactiveColor.withOpacity(0.2),
+                  color: inactive.withOpacity(.2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -1417,33 +1410,23 @@ class MiniPlayer extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        height: 40,
-                        width: 50,
-                        color: inactiveColor.withOpacity(0.1),
-                        child: artWidget,
-                      ),
-                    ),
+                    _art(item, 40),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            mediaItem.title,
+                            item.title,
                             maxLines: 1,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.primary,
-                            ),
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           Text(
-                            mediaItem.artist ?? 'Unknown Artist',
+                            item.artist ?? 'Unknown',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: inactive, fontSize: 12),
                           ),
                         ],
                       ),
@@ -1459,142 +1442,43 @@ class MiniPlayer extends StatelessWidget {
                         return Icon(
                           AppUtils.getProcessingIcon(state),
                           size: 20,
-                          color: inactiveColor,
                         );
                       },
                     ),
                   ],
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 StreamBuilder<MediaState>(
                   stream: _mediaStateStream,
-                  builder: (context, snapshot) {
-                    final position = snapshot.data?.position ?? Duration.zero;
-                    final duration =
-                        snapshot.data?.mediaItem?.duration ?? Duration.zero;
+                  builder: (_, ss) {
+                    final pos = ss.data?.position ?? Duration.zero;
+                    final dur = ss.data?.mediaItem?.duration ?? Duration.zero;
                     return Row(
                       children: [
                         Text(
-                          AppUtils.formatDuration(position),
-                          style: TextStyle(color: inactiveColor, fontSize: 12),
+                          AppUtils.formatDuration(pos),
+                          style: TextStyle(color: inactive, fontSize: 10),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: SeekBar(
-                            duration: duration,
-                            position: position,
-                            activeColor: primaryColor,
-                            inactiveColor: inactiveColor.withOpacity(0.3),
-                            onChangeEnd: (newPos) => _audioHandler.seek(newPos),
+                            duration: dur,
+                            position: pos,
+                            activeColor: theme.colorScheme.primary,
+                            inactiveColor: inactive.withOpacity(.3),
+                            onChangeEnd: _audioHandler.seek,
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          AppUtils.formatDuration(duration),
-                          style: TextStyle(color: inactiveColor, fontSize: 12),
+                          AppUtils.formatDuration(dur),
+                          style: TextStyle(color: inactive, fontSize: 10),
                         ),
                       ],
                     );
                   },
                 ),
-                StreamBuilder<PlaybackState>(
-                  stream: _audioHandler.playbackState.stream,
-                  builder: (context, snapshot) {
-                    final playing = snapshot.data?.playing ?? false;
-                    final queueIndex = snapshot.data?.queueIndex ?? 0;
-                    final queueLength = _audioHandler.queue.value.length;
-                    final repeatMode = repeatModeNotifier.value;
-                    final shuffleEnabled = shuffleNotifier.value;
-
-                    final hasPrev =
-                        (repeatMode != AudioServiceRepeatMode.one) &&
-                        queueIndex > 0;
-                    final hasNext =
-                        (repeatMode != AudioServiceRepeatMode.one) &&
-                        queueIndex < queueLength - 1;
-
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        IconButton(
-                          icon: Icon(
-                            shuffleEnabled ? Icons.shuffle_on : Icons.shuffle,
-                            color:
-                                shuffleEnabled ? primaryColor : inactiveColor,
-                            size: 20,
-                          ),
-                          onPressed: () {
-                            final current = shuffleEnabled;
-                            shuffleNotifier.value = !current;
-                            (_audioHandler as CustomAudioHandler)
-                                .toggleShuffle()
-                                .catchError((_) {
-                                  shuffleNotifier.value = current;
-                                });
-                          },
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.skip_previous,
-                            color: hasPrev ? primaryColor : inactiveColor,
-                            size: 24,
-                          ),
-                          onPressed:
-                              hasPrev ? _audioHandler.skipToPrevious : null,
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            playing
-                                ? Icons.pause_circle_filled
-                                : Icons.play_circle_fill,
-                            color: primaryColor,
-                            size: 32,
-                          ),
-                          onPressed:
-                              playing
-                                  ? _audioHandler.pause
-                                  : _audioHandler.play,
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.skip_next,
-                            color: hasNext ? primaryColor : inactiveColor,
-                            size: 24,
-                          ),
-                          onPressed: hasNext ? _audioHandler.skipToNext : null,
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            repeatMode == AudioServiceRepeatMode.one
-                                ? Icons.repeat_one
-                                : Icons.repeat,
-                            color:
-                                repeatMode != AudioServiceRepeatMode.none
-                                    ? primaryColor
-                                    : inactiveColor,
-                            size: 20,
-                          ),
-                          onPressed: () {
-                            final current = repeatMode;
-                            final next = switch (current) {
-                              AudioServiceRepeatMode.none =>
-                                AudioServiceRepeatMode.all,
-                              AudioServiceRepeatMode.all =>
-                                AudioServiceRepeatMode.one,
-                              _ => AudioServiceRepeatMode.none,
-                            };
-                            repeatModeNotifier.value = next;
-                            (_audioHandler as CustomAudioHandler)
-                                .setRepeatMode(next)
-                                .catchError((_) {
-                                  repeatModeNotifier.value = current;
-                                });
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
+                _Controls(),
               ],
             ),
           ),
@@ -1899,16 +1783,264 @@ class _GlobalWrapperState extends State<GlobalWrapper> {
         alignment: Alignment.bottomCenter,
         children: [
           widget.child,
-          Positioned(
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: MiniPlayer(),
-              ),
-            ),
+          ValueListenableBuilder<bool>(
+            valueListenable: _showFullPlayer,
+            builder:
+                (_, open, __) => AnimatedSwitcher(
+                  duration: 300.milliseconds,
+                  child:
+                      !open
+                          ? SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: MiniPlayer(),
+                            ),
+                          )
+                          : const SizedBox.shrink(),
+                ),
           ),
         ],
       ),
     );
   }
 }
+
+class FullScreenPlayer extends StatelessWidget {
+  const FullScreenPlayer({super.key});
+
+  void _onBack() {
+    Get.back();
+    // Assuming _showFullPlayer is accessible and reactive
+    _showFullPlayer.value = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult:(didPop, result) {
+        _onBack(); 
+      },
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: GestureDetector(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Theme.of(context).scaffoldBackgroundColor.withOpacity(.9),
+                    Theme.of(context).scaffoldBackgroundColor,
+                  ],
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    IconButton(onPressed: (){
+                      _onBack();
+                      }, 
+                      icon: Icon(Icons.keyboard_arrow_down_rounded, size: 35,)
+                    ), 
+                    Expanded(child: _PlayerBody())],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerBody extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+    return StreamBuilder<MediaItem?>(
+      stream: _audioHandler.mediaItem.stream,
+      builder: (_, snap) {
+        final item = snap.data;
+        if (item == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            children: [
+              const Spacer(flex: 2),
+              // LARGE ART
+              Container(
+                width: MediaQuery.sizeOf(context).width * .75,
+                height: MediaQuery.sizeOf(context).width * .75,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      blurRadius: 30,
+                      spreadRadius: 4,
+                      color: Theme.of(context).shadowColor.withOpacity(.3),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: MiniPlayer()._art(item, double.infinity),
+                ),
+              ),
+              const Spacer(),
+              // TITLE + ARTIST
+              Text(
+                item.title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                item.artist ?? 'Unknown',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge?.copyWith(color: inactive),
+              ),
+              const Spacer(),
+              // SEEK-BAR
+              StreamBuilder<MediaState>(
+                stream: rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
+                  _audioHandler.mediaItem.stream,
+                  AudioService.position,
+                  (a, b) => MediaState(a, b),
+                ),
+                builder: (_, ss) {
+                  final pos = ss.data?.position ?? Duration.zero;
+                  final dur = ss.data?.mediaItem?.duration ?? Duration.zero;
+                  return Column(
+                    children: [
+                      SeekBar(
+                        duration: dur,
+                        position: pos,
+                        activeColor: theme.colorScheme.primary,
+                        inactiveColor: inactive.withOpacity(.3),
+                        onChangeEnd: _audioHandler.seek,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              AppUtils.formatDuration(pos),
+                              style: TextStyle(color: inactive, fontSize: 12),
+                            ),
+                            Text(
+                              AppUtils.formatDuration(dur),
+                              style: TextStyle(color: inactive, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const Spacer(),
+              // CONTROLS
+              _Controls(),
+              const Spacer(flex: 2),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _Controls extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+    final primary = theme.colorScheme.primary;
+    return StreamBuilder<PlaybackState>(
+      stream: _audioHandler.playbackState,
+      builder: (_, snap) {
+        final state = snap.data;
+        final playing = state?.playing ?? false;
+        final queueIndex = state?.queueIndex ?? 0;
+        final queueLen = _audioHandler.queue.value.length;
+        final repeat = repeatModeNotifier.value;
+        final shuffle = shuffleNotifier.value;
+        final hasPrev = repeat != AudioServiceRepeatMode.one && queueIndex > 0;
+        final hasNext =
+            repeat != AudioServiceRepeatMode.one && queueIndex < queueLen - 1;
+
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          // mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(
+                shuffle ? Icons.shuffle_on : Icons.shuffle,
+                color: shuffle ? primary : inactive,
+              ),
+              onPressed: () => _toggleShuffle(),
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.skip_previous,
+                color: hasPrev ? primary : inactive,
+              ),
+              onPressed: hasPrev ? _audioHandler.skipToPrevious : null,
+            ),
+            IconButton(
+              icon: Icon(
+                playing ? Icons.pause_circle_filled : Icons.play_circle_fill,
+                color: primary,
+              ),
+              onPressed: playing ? _audioHandler.pause : _audioHandler.play,
+            ),
+            IconButton(
+              icon: Icon(Icons.skip_next, color: hasNext ? primary : inactive),
+              onPressed: hasNext ? _audioHandler.skipToNext : null,
+            ),
+            IconButton(
+              icon: Icon(
+                repeat == AudioServiceRepeatMode.one
+                    ? Icons.repeat_one
+                    : Icons.repeat,
+                color:
+                    repeat != AudioServiceRepeatMode.none ? primary : inactive,
+              ),
+              onPressed: () => _cycleRepeat(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _toggleShuffle() {
+    final old = shuffleNotifier.value;
+    shuffleNotifier.value = !old;
+    (_audioHandler as CustomAudioHandler).toggleShuffle().catchError(
+      (_) => shuffleNotifier.value = old,
+    );
+  }
+
+  void _cycleRepeat() {
+    final old = repeatModeNotifier.value;
+    final next = switch (old) {
+      AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+      AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+      _ => AudioServiceRepeatMode.none,
+    };
+    repeatModeNotifier.value = next;
+    (_audioHandler as CustomAudioHandler)
+        .setRepeatMode(next)
+        .catchError((_) => repeatModeNotifier.value = old);
+  }
+}
+
