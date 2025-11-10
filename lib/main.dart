@@ -1248,7 +1248,7 @@ class MiniPlayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
-    final inactiveColor = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha:0.4);
     final isDark = theme.brightness == Brightness.dark;
 
     return StreamBuilder<MediaItem?>(
@@ -1294,205 +1294,198 @@ class MiniPlayer extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(26),
-              color:
-                  isDark
-                      ? Colors.black.withOpacity(0.9)
-                      : AppTheme.lightTheme.cardColor.withOpacity(0.9),
+              color: isDark
+                ? Colors.black.withValues(alpha:0.9)
+                : AppTheme.lightTheme.cardColor.withValues(alpha:0.9),
               boxShadow: [
                 BoxShadow(
-                  color: inactiveColor.withOpacity(0.2),
+                  color: inactiveColor.withValues(alpha:0.2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
               ],
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(26),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            height: 40,
-                            width: 50,
-                            color: inactiveColor.withOpacity(0.1),
-                            child: artWidget,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                mediaItem.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                mediaItem.artist ?? 'Unknown Artist',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        StreamBuilder<AudioProcessingState>(
-                          stream:
-                              _audioHandler.playbackState.stream
-                                  .map((state) => state.processingState)
-                                  .distinct(),
-                          builder: (context, snapshot) {
-                            final state =
-                                snapshot.data ?? AudioProcessingState.idle;
-                            return Icon(
-                              _getProcessingIcon(state),
-                              size: 20,
-                              color: inactiveColor,
-                            );
-                          },
-                        ),
-                      ],
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        height: 40,
+                        width: 50,
+                        color: inactiveColor.withValues(alpha:0.1),
+                        child: artWidget,
+                      ),
                     ),
-                    // const SizedBox(height: 4),
-                    StreamBuilder<MediaState>(
-                      stream: _mediaStateStream,
-                      builder: (context, snapshot) {
-                        final position = snapshot.data?.position ?? Duration.zero;
-                        final duration =
-                            snapshot.data?.mediaItem?.duration ?? Duration.zero;
-                        return Row(
-                          children: [
-                            Text(
-                              _formatDuration(position),
-                              style: TextStyle(color: inactiveColor, fontSize: 12),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: SeekBar(
-                                duration: duration,
-                                position: position,
-                                activeColor: primaryColor,
-                                inactiveColor: inactiveColor.withOpacity(0.3),
-                                onChangeEnd: (newPos) => _audioHandler.seek(newPos),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _formatDuration(duration),
-                              style: TextStyle(color: inactiveColor, fontSize: 12),
-                            ),
-                          ],
-                        );
-                      },
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            mediaItem.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            mediaItem.artist ?? 'Unknown Artist',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
                     ),
-                    // const SizedBox(height: 4),
-                    StreamBuilder<PlaybackState>(
-                      stream: _audioHandler.playbackState.stream,
+                    StreamBuilder<AudioProcessingState>(
+                      stream:
+                          _audioHandler.playbackState.stream
+                              .map((state) => state.processingState)
+                              .distinct(),
                       builder: (context, snapshot) {
-                        final playing = snapshot.data?.playing ?? false;
-                        final queueIndex = snapshot.data?.queueIndex ?? 0;
-                        final queueLength = _audioHandler.queue.value.length;
-                        final repeatMode = repeatModeNotifier.value;
-                        final shuffleEnabled = shuffleNotifier.value;
-                
-                        final hasPrev =
-                            (repeatMode != AudioServiceRepeatMode.one) &&
-                            queueIndex > 0;
-                        final hasNext =
-                            (repeatMode != AudioServiceRepeatMode.one) &&
-                            queueIndex < queueLength - 1;
-                
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            IconButton(
-                              icon: Icon(
-                                shuffleEnabled ? Icons.shuffle_on : Icons.shuffle,
-                                color:
-                                    shuffleEnabled ? primaryColor : inactiveColor,
-                                size: 20,
-                              ),
-                              onPressed: () {
-                                final current = shuffleEnabled;
-                                shuffleNotifier.value = !current;
-                                (_audioHandler as CustomAudioHandler)
-                                    .toggleShuffle()
-                                    .catchError((_) {
-                                      shuffleNotifier.value = current;
-                                    });
-                              },
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.skip_previous,
-                                color: hasPrev ? primaryColor : inactiveColor,
-                                size: 24,
-                              ),
-                              onPressed:
-                                  hasPrev ? _audioHandler.skipToPrevious : null,
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                playing
-                                    ? Icons.pause_circle_filled
-                                    : Icons.play_circle_fill,
-                                color: primaryColor,
-                                size: 32,
-                              ),
-                              onPressed:
-                                  playing
-                                      ? _audioHandler.pause
-                                      : _audioHandler.play,
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.skip_next,
-                                color: hasNext ? primaryColor : inactiveColor,
-                                size: 24,
-                              ),
-                              onPressed: hasNext ? _audioHandler.skipToNext : null,
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                repeatMode == AudioServiceRepeatMode.one
-                                    ? Icons.repeat_one
-                                    : Icons.repeat,
-                                color:
-                                    repeatMode != AudioServiceRepeatMode.none
-                                        ? primaryColor
-                                        : inactiveColor,
-                                size: 20,
-                              ),
-                              onPressed: () {
-                                final current = repeatMode;
-                                final next = switch (current) {
-                                  AudioServiceRepeatMode.none =>
-                                    AudioServiceRepeatMode.all,
-                                  AudioServiceRepeatMode.all =>
-                                    AudioServiceRepeatMode.one,
-                                  _ => AudioServiceRepeatMode.none,
-                                };
-                                repeatModeNotifier.value = next;
-                                (_audioHandler as CustomAudioHandler)
-                                    .setRepeatMode(next)
-                                    .catchError((_) {
-                                      repeatModeNotifier.value = current;
-                                    });
-                              },
-                            ),
-                          ],
+                        final state =
+                            snapshot.data ?? AudioProcessingState.idle;
+                        return Icon(
+                          _getProcessingIcon(state),
+                          size: 20,
+                          color: inactiveColor,
                         );
                       },
                     ),
                   ],
                 ),
-              ),
+                // const SizedBox(height: 4),
+                StreamBuilder<MediaState>(
+                  stream: _mediaStateStream,
+                  builder: (context, snapshot) {
+                    final position = snapshot.data?.position ?? Duration.zero;
+                    final duration =
+                        snapshot.data?.mediaItem?.duration ?? Duration.zero;
+                    return Row(
+                      children: [
+                        Text(
+                          _formatDuration(position),
+                          style: TextStyle(color: inactiveColor, fontSize: 12),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SeekBar(
+                            duration: duration,
+                            position: position,
+                            activeColor: primaryColor,
+                            inactiveColor: inactiveColor.withValues(alpha:0.3),
+                            onChangeEnd: (newPos) => _audioHandler.seek(newPos),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatDuration(duration),
+                          style: TextStyle(color: inactiveColor, fontSize: 12),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                // const SizedBox(height: 4),
+                StreamBuilder<PlaybackState>(
+                  stream: _audioHandler.playbackState.stream,
+                  builder: (context, snapshot) {
+                    final playing = snapshot.data?.playing ?? false;
+                    final queueIndex = snapshot.data?.queueIndex ?? 0;
+                    final queueLength = _audioHandler.queue.value.length;
+                    final repeatMode = repeatModeNotifier.value;
+                    final shuffleEnabled = shuffleNotifier.value;
+            
+                    final hasPrev =
+                        (repeatMode != AudioServiceRepeatMode.one) &&
+                        queueIndex > 0;
+                    final hasNext =
+                        (repeatMode != AudioServiceRepeatMode.one) &&
+                        queueIndex < queueLength - 1;
+            
+                    return Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            shuffleEnabled ? Icons.shuffle_on : Icons.shuffle,
+                            color:
+                                shuffleEnabled ? primaryColor : inactiveColor,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            final current = shuffleEnabled;
+                            shuffleNotifier.value = !current;
+                            (_audioHandler as CustomAudioHandler)
+                                .toggleShuffle()
+                                .catchError((_) {
+                                  shuffleNotifier.value = current;
+                                });
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.skip_previous,
+                            color: hasPrev ? primaryColor : inactiveColor,
+                            size: 24,
+                          ),
+                          onPressed:
+                              hasPrev ? _audioHandler.skipToPrevious : null,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            playing
+                                ? Icons.pause_circle_filled
+                                : Icons.play_circle_fill,
+                            color: primaryColor,
+                            size: 32,
+                          ),
+                          onPressed:
+                              playing
+                                  ? _audioHandler.pause
+                                  : _audioHandler.play,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.skip_next,
+                            color: hasNext ? primaryColor : inactiveColor,
+                            size: 24,
+                          ),
+                          onPressed: hasNext ? _audioHandler.skipToNext : null,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            repeatMode == AudioServiceRepeatMode.one
+                                ? Icons.repeat_one
+                                : Icons.repeat,
+                            color:
+                                repeatMode != AudioServiceRepeatMode.none
+                                    ? primaryColor
+                                    : inactiveColor,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            final current = repeatMode;
+                            final next = switch (current) {
+                              AudioServiceRepeatMode.none =>
+                                AudioServiceRepeatMode.all,
+                              AudioServiceRepeatMode.all =>
+                                AudioServiceRepeatMode.one,
+                              _ => AudioServiceRepeatMode.none,
+                            };
+                            repeatModeNotifier.value = next;
+                            (_audioHandler as CustomAudioHandler)
+                                .setRepeatMode(next)
+                                .catchError((_) {
+                                  repeatModeNotifier.value = current;
+                                });
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
             ),
           ),
         );
