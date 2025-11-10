@@ -518,19 +518,23 @@ class AudioMetadata {
   static int? _parseStreamInfo(Uint8List data) {
     if (data.length < 34) return null;
 
-    final totalSamples =
-        ((data[27] & 0x0F) << 32) |
-        (data[28] << 24) |
-        (data[29] << 16) |
-        (data[30] << 8) |
-        data[31];
-    final sampleRate =
-        ((data[18] << 12) | (data[19] << 4) | ((data[20] & 0xF0) >> 4));
+    // Bytes 10–17 contain sample rate, channels, bits-per-sample, and total samples (all bit-packed)
+    // Reference: https://xiph.org/flac/format.html#metadata_block_streaminfo
 
-    if (sampleRate == 0) return null;
+    // Combine bytes 10–17 into a single 64-bit integer
+    int packed = 0;
+    for (int i = 10; i < 18; i++) {
+      packed = (packed << 8) | data[i];
+    }
 
-    final durationSeconds = totalSamples / sampleRate;
-    return (durationSeconds * 1000).round();
+    // Extract fields
+    int sampleRate = (packed >> 44) & 0xFFFFF; // 20 bits
+    int totalSamples = packed & 0xFFFFFFFFF; // 36 bits
+
+    if (sampleRate == 0 || totalSamples == 0) return null;
+
+    double durationSeconds = totalSamples / sampleRate;
+    return (durationSeconds * 1000).round(); // milliseconds
   }
 
   static void _parseVorbisComments(Uint8List data, AudioMetadata meta) {
