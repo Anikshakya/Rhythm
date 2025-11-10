@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
-
 import 'package:audio_service/audio_service.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
@@ -10,9 +8,9 @@ import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:rhythm/app_config/app_theme.dart';
-import 'package:rhythm/custom_audio_handler/audio_scanner_utils.dart';
-import 'package:rhythm/custom_audio_handler/custom_audio_handler_with_metadata.dart';
+import 'package:rhythm/app_config/app_theme.dart'; // Assuming this is your theme file
+import 'package:rhythm/custom_audio_handler/audio_scanner_utils.dart'; // Assuming this exists
+import 'package:rhythm/custom_audio_handler/custom_audio_handler_with_metadata.dart'; // Assuming this exists
 import 'package:rxdart/rxdart.dart' as rx;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -22,6 +20,7 @@ late AudioHandler _audioHandler;
 
 // ValueNotifier for managing app theme dynamically
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
+
 // Notifiers for repeat and shuffle modes for optimistic UI updates
 ValueNotifier<AudioServiceRepeatMode> repeatModeNotifier = ValueNotifier(
   AudioServiceRepeatMode.none,
@@ -31,7 +30,6 @@ ValueNotifier<bool> shuffleNotifier = ValueNotifier(false);
 // Entry point of the application
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   // Load saved theme preference
   final prefs = await SharedPreferences.getInstance();
   final savedTheme = prefs.getString('app_theme');
@@ -41,7 +39,6 @@ Future<void> main() async {
           : savedTheme == 'light'
           ? ThemeMode.light
           : ThemeMode.system;
-
   // Initialize audio handler with configuration
   _audioHandler = await AudioService.init(
     builder: () => CustomAudioHandler(),
@@ -52,14 +49,12 @@ Future<void> main() async {
       androidStopForegroundOnPause: true,
     ),
   );
-
   runApp(const MyApp());
 }
 
 /// Root widget of the application
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
@@ -81,10 +76,196 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// Utility class for common functions
+class AppUtils {
+  static String formatDuration(Duration duration) {
+    if (duration == Duration.zero) return '--:--';
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
+  static Uri? getAlbumArt(List<SongInfo> songs) {
+    if (songs.isEmpty) return null;
+    final song = songs.first;
+    return song.meta.artUri ??
+        (song.meta.albumArt != null
+            ? Uri.file(
+              '${(getTemporaryDirectory())}/art_${song.file.path.hashCode}.jpg',
+            )
+            : null);
+  }
+
+  static Uri? getArtistArt(List<SongInfo> songs) {
+    return getAlbumArt(songs); // Reuse the same logic for artist art
+  }
+
+  static IconData getProcessingIcon(AudioProcessingState state) {
+    return switch (state) {
+      AudioProcessingState.loading ||
+      AudioProcessingState.buffering => Icons.cached,
+      AudioProcessingState.ready => Icons.done,
+      AudioProcessingState.completed => Icons.repeat,
+      _ => Icons.error,
+    };
+  }
+}
+
+ /// Reusable widget for song tile
+class SongTile extends StatelessWidget {
+  final SongInfo song;
+  final bool isCurrent;
+  final VoidCallback onTap;
+  final int? trackNumber;
+  final bool showDuration;
+
+  const SongTile({
+    super.key,
+    required this.song,
+    required this.isCurrent,
+    required this.onTap,
+    this.trackNumber,
+    this.showDuration = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titleStyle = TextStyle(
+      fontWeight: FontWeight.w500,
+      color: isCurrent ? theme.colorScheme.primary : theme.colorScheme.onSurface,
+    );
+    final subtitleStyle = TextStyle(color: Colors.grey[600]);
+    final duration = Duration(milliseconds: song.meta.durationMs ?? 0);
+    final formattedDuration = AppUtils.formatDuration(duration);
+
+    Widget leading;
+    Widget? subtitleWidget;
+    Widget? trailing;
+
+    if (trackNumber != null) {
+      // Album mode: number or eq left, duration right, no subtitle
+      leading = isCurrent 
+          ? Icon(Icons.bar_chart_rounded)
+          : Text('$trackNumber', style: subtitleStyle);
+      subtitleWidget = null;
+      trailing = Text(formattedDuration, style: subtitleStyle);
+    } else {
+      // General mode: art left, artist subtitle, eq right if current
+      leading = SizedBox(
+        width: 48,
+        height: 48,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: _buildArt(),
+        ),
+      );
+      subtitleWidget = Text(song.meta.artist, style: subtitleStyle, maxLines: 1, overflow: TextOverflow.ellipsis);
+      trailing = isCurrent ? Icon(Icons.bar_chart_rounded, color: theme.colorScheme.primary) : null;
+    }
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      minVerticalPadding: 0,
+      leading: leading,
+      title: Text(song.meta.title, style: titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: subtitleWidget,
+      trailing: trailing,
+      onTap: onTap,
+      shape: const Border(bottom: BorderSide(color: Colors.grey, width: 0.1)),
+    );
+  }
+
+  Widget _buildArt() {
+    if (song.meta.artUri != null) {
+      return Image.file(
+        File(song.meta.artUri!.path),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => const Icon(Icons.music_note_outlined),
+      );
+    } else if (song.meta.albumArt != null) {
+      return Image.memory(
+        song.meta.albumArt!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => const Icon(Icons.music_note_outlined),
+      );
+    } else {
+      return const Icon(Icons.music_note_outlined);
+    }
+  }
+}
+
+/// Reusable widget for online item tile
+class OnlineTile extends StatelessWidget {
+  final MediaItem item;
+  final bool isCurrent;
+  final VoidCallback onTap;
+
+  const OnlineTile({
+    super.key,
+    required this.item,
+    required this.isCurrent,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titleStyle = TextStyle(
+      fontWeight: FontWeight.w500,
+      color: isCurrent ? theme.colorScheme.primary : theme.colorScheme.onSurface,
+    );
+    final subtitleStyle = TextStyle(color: Colors.grey[600]);
+    // final formattedDuration = AppUtils.formatDuration(item.duration ?? Duration.zero);
+
+    Widget leading = SizedBox(
+      width: 48,
+      height: 48,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: _buildArt(),
+      ),
+    );
+    Widget? trailing = isCurrent ? Icon(Icons.bar_chart_rounded, color: theme.colorScheme.primary): null;
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      minVerticalPadding: 0,
+      leading: leading,
+      title: Text(item.title, style: titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(item.artist ?? 'Unknown', style: subtitleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: trailing,
+      onTap: onTap,
+      shape: const Border(bottom: BorderSide(color: Colors.grey, width: 0.1)),
+    );
+  }
+
+  Widget _buildArt() {
+    if (item.artUri != null) {
+      final uri = item.artUri!;
+      if (uri.scheme == 'file') {
+        return Image.file(
+          File(uri.path),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => const Icon(Icons.cloud_queue_outlined),
+        );
+      } else {
+        return Image.network(
+          uri.toString(),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => const Icon(Icons.cloud_queue_outlined),
+        );
+      }
+    } else {
+      return const Icon(Icons.cloud_queue_outlined);
+    }
+  }
+}
+
 /// Main screen of the app handling music library and player UI
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
-
   @override
   _MainScreenState createState() => _MainScreenState();
 }
@@ -92,63 +273,51 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // Scanner for local music files
   final LocalMusicScanner _scanner = LocalMusicScanner();
-
   // List of discovered local songs
   List<SongInfo> _musicFiles = [];
-
   // Flag for ongoing scanning operation
   bool _isScanning = false;
-
   // Message for scanning status or errors
   String? _message;
-
   // ID of the currently playing song
   String? _currentId;
-
   // Subscription to media item changes
   StreamSubscription<MediaItem?>? _mediaItemSubscription;
-
   // Static list of online demo songs
   static final List<MediaItem> _onlineItems = [
     MediaItem(
-      id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3',
+      id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3 ',
       title: 'A Good Bass for Gambling',
       artist: 'Kevin MacLeod',
       album: 'FreePD',
       duration: Duration.zero,
     ),
     MediaItem(
-      id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3',
+      id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3 ',
       title: 'A Surprising Encounter',
       artist: 'Kevin MacLeod',
       album: 'FreePD',
       duration: Duration.zero,
     ),
   ];
-
   // Global key for Scaffold to open endDrawer
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
     // Update notifiers on playback state changes
     _audioHandler.playbackState.stream.listen((state) {
       repeatModeNotifier.value = state.repeatMode;
       shuffleNotifier.value = state.shuffleMode == AudioServiceShuffleMode.all;
     });
-
     // Subscribe to media item updates
     _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
       _saveCurrentState();
       setState(() => _currentId = item?.id);
     });
-
     // Subscribe to queue changes
     _audioHandler.queue.stream.listen((_) => _saveCurrentState());
-
     // Load saved data asynchronously
     _loadSavedSongs();
     _loadLastState();
@@ -169,9 +338,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _saveCurrentState();
     }
   }
+
   // Check if a song is currently playing
   bool _isCurrent(String id) => id == _currentId;
-
   // Toggle between light and dark theme
   Future<void> _toggleTheme() async {
     final prefs = await SharedPreferences.getInstance();
@@ -193,7 +362,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       setState(() => _message = 'No saved songs found. Scan to find songs.');
       return;
     }
-
     try {
       final savedList = json.decode(savedSongsJson) as List<dynamic>;
       final loadedSongs = <SongInfo>[];
@@ -224,7 +392,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final lastQueueJson = prefs.getString('last_queue');
     if (lastQueueJson == null) return;
-
     final lastQueueList = json.decode(lastQueueJson) as List<dynamic>;
     final items = <MediaItem>[];
     final sources = <AudioSource>[];
@@ -242,7 +409,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       items.add(item);
       sources.add(AudioSource.uri(Uri.parse(id), tag: item));
     }
-
     if (items.isNotEmpty) {
       final lastIndex = prefs.getInt('last_index') ?? 0;
       final lastPosition = Duration(
@@ -263,7 +429,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final currentQueue = _audioHandler.queue.value;
     if (currentQueue.isEmpty) return;
-
     final queueList =
         currentQueue
             .map(
@@ -292,7 +457,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _musicFiles = [];
       _message = 'Requesting permissions...';
     });
-
     final granted = await _scanner.requestPermission();
     if (!granted) {
       setState(() {
@@ -301,7 +465,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       });
       return;
     }
-
     setState(() => _message = 'Scanning directories...');
     try {
       final foundSongs = await _scanner.startSafeAutoScan();
@@ -321,13 +484,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _selectAndScanFolder() async {
     final directoryPath = await FilePicker.platform.getDirectoryPath();
     if (directoryPath == null) return;
-
     setState(() {
       _isScanning = true;
       _musicFiles = [];
       _message = 'Requesting permissions...';
     });
-
     final granted = await _scanner.requestPermission();
     if (!granted) {
       setState(() {
@@ -336,7 +497,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       });
       return;
     }
-
     setState(() => _message = 'Scanning selected folder...');
     try {
       final foundSongs = await _scanner.scanDirectory(directoryPath);
@@ -368,18 +528,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     ).showSnackBar(SnackBar(content: Text('Playing: ${items[index].title}')));
   }
 
-  // Get album art URI from the first song in the list
-  Uri? _getAlbumArt(List<SongInfo> songs) {
-    if (songs.isEmpty) return null;
-    final song = songs.first;
-    return song.meta.artUri ??
-        (song.meta.albumArt != null
-            ? Uri.file(
-              '${(getTemporaryDirectory())}/art_${song.file.path.hashCode}.jpg',
-            )
-            : null);
-  }
-
   // Build tab content based on index
   Widget _buildTabContent(int index) {
     switch (index) {
@@ -405,32 +553,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     return ListView.builder(
       itemCount: _musicFiles.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final song = _musicFiles[index];
         final songId = Uri.file(song.file.path).toString();
-        Widget leading = const Icon(Icons.music_note);
-        if (song.meta.artUri != null) {
-          leading = CircleAvatar(
-            backgroundImage: FileImage(File(song.meta.artUri!.path)),
-          );
-        } else if (song.meta.albumArt != null) {
-          leading = CircleAvatar(
-            backgroundImage: MemoryImage(song.meta.albumArt!),
-          );
-        }
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-          child: ListTile(
-            leading: leading,
-            title: Text(song.meta.title),
-            subtitle: Text('${song.meta.artist} - ${song.meta.album}'),
-            trailing:
-                _isCurrent(songId)
-                    ? const Icon(Icons.bar_chart_rounded)
-                    : null,
-            onTap: () => _playLocalSongs(_musicFiles, index),
-          ),
+        return SongTile(
+          song: song,
+          isCurrent: _isCurrent(songId),
+          onTap: () => _playLocalSongs(_musicFiles, index),
         );
       },
     );
@@ -443,23 +575,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     return ListView.builder(
       itemCount: _onlineItems.length,
-
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final item = _onlineItems[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-          child: ListTile(
-            title: Text(item.title),
-            subtitle: Text(
-              '${item.artist ?? 'Unknown'} - ${item.album ?? 'Unknown'}',
-            ),
-            leading: const Icon(Icons.videocam),
-            trailing:
-                _isCurrent(item.id)
-                    ? const Icon(Icons.bar_chart_rounded)
-                    : null,
-            onTap: () => _playOnlineSongs(_onlineItems, index),
-          ),
+        return OnlineTile(
+          item: item,
+          isCurrent: _isCurrent(item.id),
+          onTap: () => _playOnlineSongs(_onlineItems, index),
         );
       },
     );
@@ -480,7 +604,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     return ListView.builder(
       itemCount: artistList.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final artist = artistList[index];
         final songs = artists[artist]!;
@@ -529,7 +655,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       itemBuilder: (context, index) {
         final album = albumList[index];
         final songs = albums[album]!;
-        final artUri = _getAlbumArt(songs);
+        final artUri = AppUtils.getAlbumArt(songs);
         final artist = songs.first.meta.artist;
         return GestureDetector(
           onTap:
@@ -600,7 +726,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     return ListView.builder(
       itemCount: folderList.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final folder = folderList[index];
         final songs = folders[folder]!;
@@ -626,17 +754,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return DefaultTabController(
       length: 5,
       child: Scaffold(
         key: _scaffoldKey,
         drawer: Drawer(
           child: ListView(
-            padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+            padding: const EdgeInsets.only(
+              bottom: 210,
+            ), // To Avoid Miniplayer Overlap
             children: <Widget>[
-              const DrawerHeader(
-                decoration: BoxDecoration(color: Colors.blue),
-                child: Text(
+              DrawerHeader(
+                decoration: BoxDecoration(color: theme.primaryColor),
+                child: const Text(
                   'Settings',
                   style: TextStyle(color: Colors.white, fontSize: 24),
                 ),
@@ -700,7 +831,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                             decoration: InputDecoration(
                               hintText: 'Search songs, playlists, and artists',
                               suffixIcon: const Icon(Icons.mic),
-                              contentPadding: EdgeInsets.only(
+                              contentPadding: const EdgeInsets.only(
                                 top: 5,
                                 left: 15,
                                 right: 5,
@@ -732,11 +863,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               body: Column(
                 children: [
                   if (_message != null)
-                    Card(
-                      color: Theme.of(context).colorScheme.surfaceVariant,
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Text(_message!),
+                    Container(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _message ?? '${_musicFiles.length} songs',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   Expanded(
@@ -762,13 +907,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 class SearchScreen extends StatefulWidget {
   final List<SongInfo> musicFiles;
   final List<MediaItem> onlineItems;
-
   const SearchScreen({
     super.key,
     required this.musicFiles,
     required this.onlineItems,
   });
-
   @override
   _SearchScreenState createState() => _SearchScreenState();
 }
@@ -776,25 +919,19 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   // Search query for filtering
   String _searchQuery = '';
-
   // Text controller for search bar
   final TextEditingController _searchController = TextEditingController();
-
   // ID of the currently playing song
   String? _currentId;
-
   // Subscription to media item changes
   StreamSubscription<MediaItem?>? _mediaItemSubscription;
-
   @override
   void initState() {
     super.initState();
-
     // Subscribe to media item updates
     _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
       setState(() => _currentId = item?.id);
     });
-
     // Listen to search changes
     _searchController.addListener(() {
       setState(() {
@@ -812,7 +949,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
   // Check if a song is currently playing
   bool _isCurrent(String id) => id == _currentId;
-
   // Play local playlist starting from index
   void _playLocalSongs(List<SongInfo> playlist, int index) {
     (_audioHandler as CustomAudioHandler).playLocalPlaylist(playlist, index);
@@ -829,18 +965,6 @@ class _SearchScreenState extends State<SearchScreen> {
     ).showSnackBar(SnackBar(content: Text('Playing: ${items[index].title}')));
   }
 
-  // Get album art URI from the first song in the list
-  Uri? _getAlbumArt(List<SongInfo> songs) {
-    if (songs.isEmpty) return null;
-    final song = songs.first;
-    return song.meta.artUri ??
-        (song.meta.albumArt != null
-            ? Uri.file(
-              '${(getTemporaryDirectory())}/art_${song.file.path.hashCode}.jpg',
-            )
-            : null);
-  }
-
   // Build tab for all songs
   Widget _buildSongsTab() {
     final filteredSongs =
@@ -852,38 +976,21 @@ class _SearchScreenState extends State<SearchScreen> {
               lowerArtist.contains(_searchQuery) ||
               lowerAlbum.contains(_searchQuery);
         }).toList();
-
     if (filteredSongs.isEmpty) {
       return const Center(child: Text('No matching songs found.'));
     }
     return ListView.builder(
       itemCount: filteredSongs.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final song = filteredSongs[index];
         final songId = Uri.file(song.file.path).toString();
-        Widget leading = const Icon(Icons.music_note);
-        if (song.meta.artUri != null) {
-          leading = CircleAvatar(
-            backgroundImage: FileImage(File(song.meta.artUri!.path)),
-          );
-        } else if (song.meta.albumArt != null) {
-          leading = CircleAvatar(
-            backgroundImage: MemoryImage(song.meta.albumArt!),
-          );
-        }
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-          child: ListTile(
-            leading: leading,
-            title: Text(song.meta.title),
-            subtitle: Text('${song.meta.artist} - ${song.meta.album}'),
-            trailing:
-                _isCurrent(songId)
-                    ? const Icon(Icons.volume_up, color: Colors.blue)
-                    : null,
-            onTap: () => _playLocalSongs(filteredSongs, index),
-          ),
+        return SongTile(
+          song: song,
+          isCurrent: _isCurrent(songId),
+          onTap: () => _playLocalSongs(filteredSongs, index),
         );
       },
     );
@@ -900,29 +1007,20 @@ class _SearchScreenState extends State<SearchScreen> {
               lowerArtist.contains(_searchQuery) ||
               lowerAlbum.contains(_searchQuery);
         }).toList();
-
     if (filteredItems.isEmpty) {
       return const Center(child: Text('No matching online found.'));
     }
     return ListView.builder(
       itemCount: filteredItems.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final item = filteredItems[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-          child: ListTile(
-            title: Text(item.title),
-            subtitle: Text(
-              '${item.artist ?? 'Unknown'} - ${item.album ?? 'Unknown'}',
-            ),
-            leading: const Icon(Icons.videocam),
-            trailing:
-                _isCurrent(item.id)
-                    ? const Icon(Icons.volume_up, color: Colors.blue)
-                    : null,
-            onTap: () => _playOnlineSongs(filteredItems, index),
-          ),
+        return OnlineTile(
+          item: item,
+          isCurrent: _isCurrent(item.id),
+          onTap: () => _playOnlineSongs(filteredItems, index),
         );
       },
     );
@@ -945,7 +1043,9 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     return ListView.builder(
       itemCount: artistList.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final artist = artistList[index];
         final songs = artists[artist]!;
@@ -996,7 +1096,7 @@ class _SearchScreenState extends State<SearchScreen> {
       itemBuilder: (context, index) {
         final album = albumList[index];
         final songs = albums[album]!;
-        final artUri = _getAlbumArt(songs);
+        final artUri = AppUtils.getAlbumArt(songs);
         final artist = songs.first.meta.artist;
         return GestureDetector(
           onTap:
@@ -1070,7 +1170,9 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     return ListView.builder(
       itemCount: folderList.length,
-      padding: EdgeInsets.only(bottom: 210), // To Avoid Miniplayer Overlap
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final folder = folderList[index];
         final songs = folders[folder]!;
@@ -1111,7 +1213,11 @@ class _SearchScreenState extends State<SearchScreen> {
                     controller: _searchController,
                     autofocus: true,
                     decoration: InputDecoration(
-                      contentPadding: EdgeInsets.only(top: 5, left: 15, right: 5),
+                      contentPadding: const EdgeInsets.only(
+                        top: 5,
+                        left: 15,
+                        right: 5,
+                      ),
                       hintText: 'Search songs, playlists, and artists',
                       suffixIcon: const Icon(Icons.mic),
                       border: OutlineInputBorder(
@@ -1151,7 +1257,7 @@ class _SearchScreenState extends State<SearchScreen> {
 }
 
 /// Screen for folder details
-class FolderDetailScreen extends StatelessWidget {
+class FolderDetailScreen extends StatefulWidget {
   final String folder;
   final List<SongInfo> songs;
 
@@ -1161,22 +1267,46 @@ class FolderDetailScreen extends StatelessWidget {
     required this.songs,
   });
 
+  @override
+  State<FolderDetailScreen> createState() => _FolderDetailScreenState();
+}
+
+class _FolderDetailScreenState extends State<FolderDetailScreen> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
+
   void _playSongs(int index, {bool shuffle = false}) {
     final handler = _audioHandler as CustomAudioHandler;
     if (shuffle) {
       handler.toggleShuffle();
     }
-    handler.playLocalPlaylist(songs, index);
+    handler.playLocalPlaylist(widget.songs, index);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(path.basename(folder))),
+      appBar: AppBar(title: Text(path.basename(widget.folder))),
       body: Column(
         children: [
           Text(
-            '${songs.length} songs',
+            '${widget.songs.length} songs',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           Row(
@@ -1195,12 +1325,13 @@ class FolderDetailScreen extends StatelessWidget {
           ),
           Expanded(
             child: ListView.builder(
-              itemCount: songs.length,
+              itemCount: widget.songs.length,
               itemBuilder: (context, index) {
-                final song = songs[index];
-                return ListTile(
-                  title: Text(song.meta.title),
-                  subtitle: Text('${song.meta.artist} - ${song.meta.album}'),
+                final song = widget.songs[index];
+                final songId = Uri.file(song.file.path).toString();
+                return SongTile(
+                  song: song,
+                  isCurrent: _isCurrent(songId),
                   onTap: () => _playSongs(index),
                 );
               },
@@ -1215,7 +1346,6 @@ class FolderDetailScreen extends StatelessWidget {
 /// Mini player widget that can be used across screens
 class MiniPlayer extends StatelessWidget {
   MiniPlayer({super.key});
-
   // Combined stream for media item and position
   Stream<MediaState> get _mediaStateStream =>
       rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
@@ -1223,34 +1353,12 @@ class MiniPlayer extends StatelessWidget {
         AudioService.position,
         (mediaItem, position) => MediaState(mediaItem, position),
       );
-
-  // Format duration as mm:ss or h:mm:ss
-  String _formatDuration(Duration duration) {
-    if (duration == Duration.zero) return '--:--';
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-
-  // Get icon for processing state
-  IconData _getProcessingIcon(AudioProcessingState state) {
-    return switch (state) {
-      AudioProcessingState.loading ||
-      AudioProcessingState.buffering => Icons.cached,
-      AudioProcessingState.ready => Icons.done,
-      AudioProcessingState.completed => Icons.repeat,
-      _ => Icons.error,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final primaryColor = theme.colorScheme.primary;
-    final inactiveColor = theme.colorScheme.onSurface.withValues(alpha:0.4);
+    final inactiveColor = theme.colorScheme.onSurface.withOpacity(0.4);
     final isDark = theme.brightness == Brightness.dark;
-
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
       builder: (context, snapshot) {
@@ -1258,7 +1366,6 @@ class MiniPlayer extends StatelessWidget {
         if (mediaItem == null) {
           return const SizedBox.shrink();
         }
-
         Widget artWidget = Icon(Icons.album, size: 50, color: inactiveColor);
         if (mediaItem.artUri != null) {
           final uri = mediaItem.artUri!;
@@ -1283,7 +1390,6 @@ class MiniPlayer extends StatelessWidget {
                             Icon(Icons.album, size: 50, color: inactiveColor),
                   );
         }
-
         return GestureDetector(
           onTap: () {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1294,12 +1400,13 @@ class MiniPlayer extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(26),
-              color: isDark
-                ? Colors.black.withValues(alpha:0.9)
-                : AppTheme.lightTheme.cardColor.withValues(alpha:0.9),
+              color:
+                  isDark
+                      ? Colors.black.withOpacity(0.9)
+                      : AppTheme.lightTheme.cardColor.withOpacity(0.9),
               boxShadow: [
                 BoxShadow(
-                  color: inactiveColor.withValues(alpha:0.2),
+                  color: inactiveColor.withOpacity(0.2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -1315,7 +1422,7 @@ class MiniPlayer extends StatelessWidget {
                       child: Container(
                         height: 40,
                         width: 50,
-                        color: inactiveColor.withValues(alpha:0.1),
+                        color: inactiveColor.withOpacity(0.1),
                         child: artWidget,
                       ),
                     ),
@@ -1327,6 +1434,10 @@ class MiniPlayer extends StatelessWidget {
                           Text(
                             mediaItem.title,
                             maxLines: 1,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.primary,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
@@ -1346,7 +1457,7 @@ class MiniPlayer extends StatelessWidget {
                         final state =
                             snapshot.data ?? AudioProcessingState.idle;
                         return Icon(
-                          _getProcessingIcon(state),
+                          AppUtils.getProcessingIcon(state),
                           size: 20,
                           color: inactiveColor,
                         );
@@ -1354,7 +1465,7 @@ class MiniPlayer extends StatelessWidget {
                     ),
                   ],
                 ),
-                // const SizedBox(height: 4),
+                SizedBox(height: 6),
                 StreamBuilder<MediaState>(
                   stream: _mediaStateStream,
                   builder: (context, snapshot) {
@@ -1364,7 +1475,7 @@ class MiniPlayer extends StatelessWidget {
                     return Row(
                       children: [
                         Text(
-                          _formatDuration(position),
+                          AppUtils.formatDuration(position),
                           style: TextStyle(color: inactiveColor, fontSize: 12),
                         ),
                         const SizedBox(width: 8),
@@ -1373,20 +1484,19 @@ class MiniPlayer extends StatelessWidget {
                             duration: duration,
                             position: position,
                             activeColor: primaryColor,
-                            inactiveColor: inactiveColor.withValues(alpha:0.3),
+                            inactiveColor: inactiveColor.withOpacity(0.3),
                             onChangeEnd: (newPos) => _audioHandler.seek(newPos),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          _formatDuration(duration),
+                          AppUtils.formatDuration(duration),
                           style: TextStyle(color: inactiveColor, fontSize: 12),
                         ),
                       ],
                     );
                   },
                 ),
-                // const SizedBox(height: 4),
                 StreamBuilder<PlaybackState>(
                   stream: _audioHandler.playbackState.stream,
                   builder: (context, snapshot) {
@@ -1395,14 +1505,14 @@ class MiniPlayer extends StatelessWidget {
                     final queueLength = _audioHandler.queue.value.length;
                     final repeatMode = repeatModeNotifier.value;
                     final shuffleEnabled = shuffleNotifier.value;
-            
+
                     final hasPrev =
                         (repeatMode != AudioServiceRepeatMode.one) &&
                         queueIndex > 0;
                     final hasNext =
                         (repeatMode != AudioServiceRepeatMode.one) &&
                         queueIndex < queueLength - 1;
-            
+
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
@@ -1495,7 +1605,7 @@ class MiniPlayer extends StatelessWidget {
 }
 
 /// Screen for artist details
-class ArtistDetailScreen extends StatelessWidget {
+class ArtistDetailScreen extends StatefulWidget {
   final String artist;
   final List<SongInfo> songs;
 
@@ -1505,113 +1615,52 @@ class ArtistDetailScreen extends StatelessWidget {
     required this.songs,
   });
 
-  Uri? _getArtistArt() {
-    if (songs.isEmpty) return null;
-    final song = songs.first;
-    return song.meta.artUri ??
-        (song.meta.albumArt != null
-            ? Uri.file(
-              '${(getTemporaryDirectory())}/art_${song.file.path.hashCode}.jpg',
-            )
-            : null);
-  }
-
-  void _playSongs(int index, {bool shuffle = false}) {
-    final handler = _audioHandler as CustomAudioHandler;
-    if (shuffle) {
-      handler.toggleShuffle();
-    }
-    handler.playLocalPlaylist(songs, index);
-  }
-
   @override
-  Widget build(BuildContext context) {
-    final artUri = _getArtistArt();
-    return Scaffold(
-      appBar: AppBar(title: Text(artist)),
-      body: Column(
-        children: [
-          if (artUri != null)
-            Image.file(
-              File(artUri.path),
-              height: 200,
-              width: 200,
-              fit: BoxFit.cover,
-            ),
-          Text(artist, style: Theme.of(context).textTheme.headlineMedium),
-          Text(
-            '${songs.length} songs',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton(
-                onPressed: () => _playSongs(0),
-                child: const Text('Play'),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton(
-                onPressed: () => _playSongs(0, shuffle: true),
-                child: const Text('Shuffle'),
-              ),
-            ],
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: songs.length,
-              itemBuilder: (context, index) {
-                final song = songs[index];
-                return ListTile(
-                  title: Text(song.meta.title),
-                  subtitle: Text(song.meta.album),
-                  onTap: () => _playSongs(index),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<ArtistDetailScreen> createState() => _ArtistDetailScreenState();
 }
 
-/// Screen for album details
-class AlbumDetailScreen extends StatelessWidget {
-  final String album;
-  final String artist;
-  final List<SongInfo> songs;
-  final Uri? artUri;
+class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
 
-  const AlbumDetailScreen({
-    super.key,
-    required this.album,
-    required this.artist,
-    required this.songs,
-    this.artUri,
-  });
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
 
   void _playSongs(int index, {bool shuffle = false}) {
     final handler = _audioHandler as CustomAudioHandler;
     if (shuffle) {
       handler.toggleShuffle();
     }
-    handler.playLocalPlaylist(songs, index);
+    handler.playLocalPlaylist(widget.songs, index);
   }
 
   @override
   Widget build(BuildContext context) {
+    final artUri = AppUtils.getArtistArt(widget.songs);
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
             expandedHeight: 300,
             flexibleSpace: FlexibleSpaceBar(
-              title: Text(album),
+              title: Text(widget.artist),
               background:
                   artUri != null
-                      ? Image.file(File(artUri!.path), fit: BoxFit.cover)
-                      : const Center(child: Icon(Icons.album, size: 100)),
+                      ? Image.file(File(artUri.path), fit: BoxFit.cover)
+                      : const Center(child: Icon(Icons.person, size: 100)),
             ),
           ),
           SliverToBoxAdapter(
@@ -1620,7 +1669,10 @@ class AlbumDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(artist, style: Theme.of(context).textTheme.titleLarge),
+                  Text(
+                    '${widget.songs.length} songs',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1641,13 +1693,128 @@ class AlbumDetailScreen extends StatelessWidget {
           ),
           SliverList(
             delegate: SliverChildBuilderDelegate((context, index) {
-              final song = songs[index];
-              return ListTile(
-                leading: Text('${index + 1}'),
-                title: Text(song.meta.title),
+              final song = widget.songs[index];
+              final songId = Uri.file(song.file.path).toString();
+              return SongTile(
+                song: song,
+                isCurrent: _isCurrent(songId),
                 onTap: () => _playSongs(index),
               );
-            }, childCount: songs.length),
+            }, childCount: widget.songs.length),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Screen for album details
+class AlbumDetailScreen extends StatefulWidget {
+  final String album;
+  final String artist;
+  final List<SongInfo> songs;
+  final Uri? artUri;
+
+  const AlbumDetailScreen({
+    super.key,
+    required this.album,
+    required this.artist,
+    required this.songs,
+    this.artUri,
+  });
+
+  @override
+  State<AlbumDetailScreen> createState() => _AlbumDetailScreenState();
+}
+
+class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
+
+  void _playSongs(int index, {bool shuffle = false}) {
+    final handler = _audioHandler as CustomAudioHandler;
+    if (shuffle) {
+      handler.toggleShuffle();
+    }
+    handler.playLocalPlaylist(widget.songs, index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 300,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(widget.album),
+              background:
+                  widget.artUri != null
+                      ? Image.file(File(widget.artUri!.path), fit: BoxFit.cover)
+                      : const Center(child: Icon(Icons.album, size: 100)),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.artist,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${widget.songs.length} songs',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      FilledButton(
+                        onPressed: () => _playSongs(0),
+                        child: const Text('Play'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: () => _playSongs(0, shuffle: true),
+                        child: const Text('Shuffle'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final song = widget.songs[index];
+              final songId = Uri.file(song.file.path).toString();
+              return SongTile(
+                song: song,
+                isCurrent: _isCurrent(songId),
+                onTap: () => _playSongs(index),
+                trackNumber: index + 1,
+                showDuration: true,
+              );
+            }, childCount: widget.songs.length),
           ),
         ],
       ),
@@ -1659,7 +1826,6 @@ class AlbumDetailScreen extends StatelessWidget {
 class MediaState {
   final MediaItem? mediaItem;
   final Duration position;
-
   MediaState(this.mediaItem, this.position);
 }
 
@@ -1670,7 +1836,6 @@ class SeekBar extends StatefulWidget {
   final ValueChanged<Duration>? onChangeEnd;
   final Color activeColor;
   final Color inactiveColor;
-
   const SeekBar({
     super.key,
     required this.duration,
@@ -1679,14 +1844,12 @@ class SeekBar extends StatefulWidget {
     required this.activeColor,
     required this.inactiveColor,
   });
-
   @override
-  _SeekBarState createState() => _SeekBarState();
+  State<SeekBar>  createState() => _SeekBarState();
 }
 
 class _SeekBarState extends State<SeekBar> {
   double? _dragValue;
-
   @override
   Widget build(BuildContext context) {
     double value = _dragValue ?? widget.position.inMilliseconds.toDouble();
@@ -1695,18 +1858,28 @@ class _SeekBarState extends State<SeekBar> {
       1.0,
       double.infinity,
     );
-
-    return Slider(
-      min: 0.0,
-      max: max,
-      value: value,
-      activeColor: widget.activeColor,
-      inactiveColor: widget.inactiveColor,
-      onChanged: (newValue) => setState(() => _dragValue = newValue),
-      onChangeEnd: (newValue) {
-        widget.onChangeEnd?.call(Duration(milliseconds: newValue.round()));
-        setState(() => _dragValue = null);
-      },
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 4.0, // 🔹 Increase slider height
+        thumbShape: const RoundSliderThumbShape(
+          enabledThumbRadius: 6, // 🔹 Reduce thumb size
+        ),
+        overlayShape: const RoundSliderOverlayShape(
+          overlayRadius: 14.0, // 🔹 Reduce the ripple when dragging
+        ),
+      ),
+      child: Slider(
+        min: 0.0,
+        max: max,
+        value: value,
+        activeColor: widget.activeColor,
+        inactiveColor: widget.inactiveColor,
+        onChanged: (newValue) => setState(() => _dragValue = newValue),
+        onChangeEnd: (newValue) {
+          widget.onChangeEnd?.call(Duration(milliseconds: newValue.round()));
+          setState(() => _dragValue = null);
+        },
+      ),
     );
   }
 }
@@ -1714,7 +1887,6 @@ class _SeekBarState extends State<SeekBar> {
 class GlobalWrapper extends StatefulWidget {
   final Widget child;
   const GlobalWrapper({super.key, required this.child});
-
   @override
   State<GlobalWrapper> createState() => _GlobalWrapperState();
 }
