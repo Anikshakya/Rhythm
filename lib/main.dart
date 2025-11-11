@@ -1449,7 +1449,7 @@ class MiniPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
       builder: (_, snap) {
@@ -1465,10 +1465,10 @@ class MiniPlayer extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(26),
               color: theme.brightness ==
-                  Brightness.dark ? const Color.fromARGB(255, 18, 18, 18).withValues(alpha: 0.92) : theme.cardColor.withOpacity(.9),
+                  Brightness.dark ? const Color.fromARGB(255, 18, 18, 18).withValues(alpha: 0.92) : theme.cardColor.withValues(alpha: .9),
               boxShadow: [
                 BoxShadow(
-                  color: inactive.withOpacity(.2),
+                  color: inactive.withValues(alpha: .2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -1534,7 +1534,7 @@ class MiniPlayer extends StatelessWidget {
                             duration: dur,
                             position: pos,
                             activeColor: theme.colorScheme.primary,
-                            inactiveColor: inactive.withOpacity(.3),
+                            inactiveColor: inactive.withValues(alpha: .3),
                             onChangeEnd: _audioHandler.seek,
                           ),
                         ),
@@ -1714,15 +1714,15 @@ class _GlobalWrapperState extends State<GlobalWrapper> {
 class FullScreenPlayer extends StatelessWidget {
   const FullScreenPlayer({super.key});
 
-  void _onBack() {
-    _showFullPlayer.value = false; // reactive close flag
+  void _onBack() async{
     Get.back();
+    _showFullPlayer.value = false; // reactive close flag
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, result) => _onBack(),
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -1758,7 +1758,7 @@ class FullScreenPlayer extends StatelessWidget {
                 Container(
                   color: Theme.of(context)
                       .scaffoldBackgroundColor
-                      .withOpacity(0.4), // subtle overlay
+                      .withValues(alpha: 0.4), // subtle overlay
                 ),
 
                 /// 🎧 PLAYER BODY
@@ -1817,7 +1817,7 @@ class _PlayerBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
 
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
@@ -1851,7 +1851,7 @@ class _PlayerBody extends StatelessWidget {
                             blurRadius: 30,
                             spreadRadius: 4,
                             color:
-                                Theme.of(context).shadowColor.withOpacity(.3),
+                                Theme.of(context).shadowColor.withValues(alpha: .3),
                           ),
                         ],
                       ),
@@ -1903,7 +1903,7 @@ class _PlayerBody extends StatelessWidget {
                         duration: dur,
                         position: pos,
                         activeColor: theme.colorScheme.primary,
-                        inactiveColor: inactive.withOpacity(.3),
+                        inactiveColor: inactive.withValues(alpha: .3),
                         onChangeEnd: _audioHandler.seek,
                       ),
                       Padding(
@@ -1945,7 +1945,7 @@ class _Controls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
     final primary = theme.colorScheme.primary;
     return StreamBuilder<PlaybackState>(
       stream: _audioHandler.playbackState,
@@ -2130,11 +2130,11 @@ class _DetailScaffoldState extends State<DetailScaffold> {
                             colors: isDark
                                 ? [
                                     Colors.transparent,
-                                    Colors.black.withOpacity(0.9),
+                                    Colors.black.withValues(alpha: 0.9),
                                   ]
                                 : [
                                     Colors.transparent,
-                                    Colors.white.withOpacity(0.9),
+                                    Colors.white.withValues(alpha: 0.9),
                                   ],
                           ),
                         ),
@@ -2164,7 +2164,7 @@ class _DetailScaffoldState extends State<DetailScaffold> {
                                       color: (isDark
                                               ? Colors.white
                                               : Colors.black)
-                                          .withOpacity(0.8),
+                                          .withValues(alpha: 0.8),
                                     ),
                                   ),
                                 ],
@@ -2193,7 +2193,7 @@ class _DetailScaffoldState extends State<DetailScaffold> {
                   Text(
                     '${widget.songs.length} songs',
                     style: theme.textTheme.titleMedium?.copyWith(
-                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                      color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.7),
                     ),
                   ),
                   const SizedBox(height: 16),
