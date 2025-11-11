@@ -2120,7 +2120,7 @@ class _Controls extends StatelessWidget {
           children: [
             IconButton(
               icon: Icon(
-                shuffle ? Icons.shuffle_on : Icons.shuffle,
+                Icons.shuffle,
                 color: shuffle ? primary : inactive,
               ),
               onPressed: () => _toggleShuffle(),
