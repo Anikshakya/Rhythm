@@ -661,9 +661,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       padding: const EdgeInsets.only(bottom: 210, top: 20), 
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.8,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: 5,
+        mainAxisSpacing: 5,
       ),
       itemCount: albumList.length,
       itemBuilder: (context, index) {
@@ -688,8 +688,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           child: Column(
             children: [
               Container(
-                height: 120,
-                width: 120,
+                height: 160,
+                width: 160,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   image:
@@ -1159,9 +1159,9 @@ class _SearchScreenState extends State<SearchScreen> {
       ), // To Avoid Miniplayer Overlap
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.8,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: 5,
+        mainAxisSpacing: 5,
       ),
       itemCount: albumList.length,
       itemBuilder: (context, index) {
@@ -1186,8 +1186,8 @@ class _SearchScreenState extends State<SearchScreen> {
           child: Column(
             children: [
               Container(
-                height: 120,
-                width: 120,
+                height: 160,
+                width: 160,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   image:
@@ -1416,7 +1416,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
 /// Mini player widget that can be used across screens
 class MiniPlayer extends StatelessWidget {
-  MiniPlayer({super.key});
+  const MiniPlayer({super.key});
   Stream<MediaState> get _mediaStateStream =>
       rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
         _audioHandler.mediaItem.stream,
