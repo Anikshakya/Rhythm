@@ -1558,7 +1558,7 @@ class MiniPlayer extends StatelessWidget {
 }
 
 /// Screen for artist details
-class ArtistDetailScreen extends StatefulWidget {
+class ArtistDetailScreen extends StatelessWidget {
   final String artist;
   final List<SongInfo> songs;
 
@@ -1569,100 +1569,22 @@ class ArtistDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<ArtistDetailScreen> createState() => _ArtistDetailScreenState();
-}
-
-class _ArtistDetailScreenState extends State<ArtistDetailScreen> {
-  String? _currentId;
-  StreamSubscription<MediaItem?>? _mediaItemSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
-      setState(() => _currentId = item?.id);
-    });
-  }
-
-  @override
-  void dispose() {
-    _mediaItemSubscription?.cancel();
-    super.dispose();
-  }
-
-  bool _isCurrent(String id) => id == _currentId;
-
-  void _playSongs(int index, {bool shuffle = false}) {
-    final handler = _audioHandler as CustomAudioHandler;
-    if (shuffle) {
-      handler.toggleShuffle();
-    }
-    handler.playLocalPlaylist(widget.songs, index);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final artUri = AppUtils.getArtistArt(widget.songs);
-    return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 300,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.artist),
-              background:
-                  artUri != null
-                      ? Image.file(File(artUri.path), fit: BoxFit.cover)
-                      : const Center(child: Icon(Icons.person, size: 100)),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${widget.songs.length} songs',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      FilledButton(
-                        onPressed: () => _playSongs(0),
-                        child: const Text('Play'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => _playSongs(0, shuffle: true),
-                        child: const Text('Shuffle'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final song = widget.songs[index];
-              final songId = Uri.file(song.file.path).toString();
-              return SongTile(
-                song: song,
-                isCurrent: _isCurrent(songId),
-                onTap: () => _playSongs(index),
-              );
-            }, childCount: widget.songs.length),
-          ),
-        ],
-      ),
+    final artUri = AppUtils.getArtistArt(songs);
+    return DetailScaffold(
+      title: artist,
+      subtitle:
+          '${songs.length} tracks • ${songs.length} albums',
+      songs: songs,
+      artUri: artUri,
+      showArtist: false,
     );
   }
 }
 
+
 /// Screen for album details
-class AlbumDetailScreen extends StatefulWidget {
+class AlbumDetailScreen extends StatelessWidget {
   final String album;
   final String artist;
   final List<SongInfo> songs;
@@ -1677,103 +1599,17 @@ class AlbumDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<AlbumDetailScreen> createState() => _AlbumDetailScreenState();
-}
-
-class _AlbumDetailScreenState extends State<AlbumDetailScreen> {
-  String? _currentId;
-  StreamSubscription<MediaItem?>? _mediaItemSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
-      setState(() => _currentId = item?.id);
-    });
-  }
-
-  @override
-  void dispose() {
-    _mediaItemSubscription?.cancel();
-    super.dispose();
-  }
-
-  bool _isCurrent(String id) => id == _currentId;
-
-  void _playSongs(int index, {bool shuffle = false}) {
-    final handler = _audioHandler as CustomAudioHandler;
-    if (shuffle) {
-      handler.toggleShuffle();
-    }
-    handler.playLocalPlaylist(widget.songs, index);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 300,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(widget.album),
-              background:
-                  widget.artUri != null
-                      ? Image.file(File(widget.artUri!.path), fit: BoxFit.cover)
-                      : const Center(child: Icon(Icons.album, size: 100)),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.artist,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${widget.songs.length} songs',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      FilledButton(
-                        onPressed: () => _playSongs(0),
-                        child: const Text('Play'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => _playSongs(0, shuffle: true),
-                        child: const Text('Shuffle'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final song = widget.songs[index];
-              final songId = Uri.file(song.file.path).toString();
-              return SongTile(
-                song: song,
-                isCurrent: _isCurrent(songId),
-                onTap: () => _playSongs(index),
-                trackNumber: index + 1,
-                showDuration: true,
-              );
-            }, childCount: widget.songs.length),
-          ),
-        ],
-      ),
+    return DetailScaffold(
+      title: album,
+      subtitle: artist,
+      songs: songs,
+      artUri: artUri,
+      showArtist: true,
     );
   }
 }
+
 
 /// Combined media state for stream builder
 class MediaState {
@@ -1935,8 +1771,9 @@ class FullScreenPlayer extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 4),
                         child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          mainAxisAlignment: MainAxisAlignment.start,
                           children: [
+                            SizedBox(width: 28,),
                             IconButton(
                               icon: const Icon(
                                 Icons.keyboard_arrow_down_rounded,
@@ -1944,6 +1781,7 @@ class FullScreenPlayer extends StatelessWidget {
                               ),
                               onPressed: _onBack,
                             ),
+                            Spacer(),
                             IconButton(
                               icon: const Icon(Icons.timer_outlined, size: 28),
                               onPressed: () {
@@ -2003,26 +1841,26 @@ class _PlayerBody extends StatelessWidget {
                     duration: const Duration(milliseconds: 500),
                     curve: Curves.easeOut,
                     scale: playing ? 1.0 : 0.7, // shrink slightly when paused
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 400),
-                      opacity: playing ? 1 : 0.9,
-                      child: Container(
-                        width: MediaQuery.sizeOf(context).width * .75,
-                        height: MediaQuery.sizeOf(context).width * .75,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              blurRadius: 30,
-                              spreadRadius: 4,
-                              color:
-                                  Theme.of(context).shadowColor.withOpacity(.3),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: MiniPlayer()._art(item, double.infinity),
+                    child: Container(
+                      width: MediaQuery.sizeOf(context).width * .75,
+                      height: MediaQuery.sizeOf(context).width * .75,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            blurRadius: 30,
+                            spreadRadius: 4,
+                            color:
+                                Theme.of(context).shadowColor.withOpacity(.3),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Material(
+                          elevation: 10,
+                          clipBehavior: Clip.antiAlias,
+                          child: MiniPlayer()._art(item, double.infinity)
                         ),
                       ),
                     ),
@@ -2188,4 +2026,225 @@ class _Controls extends StatelessWidget {
         .catchError((_) => repeatModeNotifier.value = old);
   }
 }
+
+
+class DetailScaffold extends StatefulWidget {
+  final String title;
+  final String subtitle;
+  final List<SongInfo> songs;
+  final Uri? artUri;
+  final bool showSubtitle;
+  final bool showArtist;
+
+  const DetailScaffold({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.songs,
+    this.artUri,
+    this.showSubtitle = false,
+    this.showArtist = false,
+  });
+
+  @override
+  State<DetailScaffold> createState() => _DetailScaffoldState();
+}
+
+class _DetailScaffoldState extends State<DetailScaffold> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
+
+  void _playSongs(int index, {bool shuffle = false}) {
+    final handler = _audioHandler as CustomAudioHandler;
+    if (shuffle) handler.toggleShuffle();
+    handler.playLocalPlaylist(widget.songs, index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Scaffold(
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) => [
+          SliverAppBar(
+            pinned: true,
+            stretch: true,
+            elevation: 0,
+            expandedHeight: 320,
+            backgroundColor: theme.scaffoldBackgroundColor,
+            automaticallyImplyLeading: false,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Get.back(),
+            ),
+            flexibleSpace: LayoutBuilder(
+              builder: (context, constraints) {
+                final percent =
+                    (constraints.maxHeight - kToolbarHeight) / (320 - kToolbarHeight);
+                return FlexibleSpaceBar(
+                  centerTitle: false,
+                  titlePadding:
+                      const EdgeInsets.symmetric(horizontal: 50, vertical: 12),
+                  title: Opacity(
+                    opacity: 1 - percent.clamp(0.0, 1.0),
+                    child: Text(
+                      widget.title,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                  ),
+                  background: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      widget.artUri != null
+                          ? Image.file(
+                              File(widget.artUri!.path),
+                              fit: BoxFit.cover,
+                            )
+                          : const Center(child: Icon(Icons.album, size: 100)),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: isDark
+                                ? [
+                                    Colors.transparent,
+                                    Colors.black.withOpacity(0.9),
+                                  ]
+                                : [
+                                    Colors.transparent,
+                                    Colors.white.withOpacity(0.9),
+                                  ],
+                          ),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 16, bottom: 24),
+                          child: Opacity(
+                            opacity: percent.clamp(0.0, 1.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.title,
+                                  style: theme.textTheme.headlineSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: isDark ? Colors.white : Colors.black,
+                                  ),
+                                ),
+                                if (widget.showSubtitle) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    widget.subtitle,
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      color: (isDark
+                                              ? Colors.white
+                                              : Colors.black)
+                                          .withOpacity(0.8),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+        body: ListView(
+          padding: const EdgeInsets.only(bottom: 210), // Avoid Mini Player
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.showArtist)
+                    Text(widget.subtitle, style: theme.textTheme.titleLarge),
+                  Text(
+                    '${widget.songs.length} songs',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _playSongs(0),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Play'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(140, 45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _playSongs(0, shuffle: true),
+                        icon: const Icon(Icons.shuffle),
+                        label: const Text('Shuffle'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(140, 45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ...List.generate(widget.songs.length, (index) {
+              final song = widget.songs[index];
+              final songId = Uri.file(song.file.path).toString();
+              return SongTile(
+                song: song,
+                isCurrent: _isCurrent(songId),
+                onTap: () => _playSongs(index),
+                trackNumber: index + 1,
+                showDuration: true,
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 
