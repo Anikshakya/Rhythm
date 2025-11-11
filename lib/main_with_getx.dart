@@ -327,11 +327,7 @@ class SleepTimerController extends GetxController {
         timer.cancel();
         remaining.value = Duration.zero;
         (_audioHandler as CustomAudioHandler).stop();
-        Get.snackbar(
-          'Sleep Timer',
-          'Your Sleep Timer Has Ended',
-        );
-
+        Get.snackbar('Sleep Timer', 'Your Sleep Timer Has Ended');
       }
     });
   }

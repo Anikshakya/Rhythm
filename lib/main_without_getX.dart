@@ -17,13 +17,33 @@ import 'package:rxdart/rxdart.dart' as rx;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
-// Global audio handler
+// Global audio handler for managing playback
 late AudioHandler _audioHandler;
 
-// Entry point
+// ValueNotifier for managing app theme dynamically
+final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
+
+// Notifiers for repeat and shuffle modes for optimistic UI updates
+ValueNotifier<AudioServiceRepeatMode> repeatModeNotifier = ValueNotifier(
+  AudioServiceRepeatMode.none,
+);
+ValueNotifier<bool> shuffleNotifier = ValueNotifier(false);
+ValueNotifier<bool> _showBlurImagePlayerBg = ValueNotifier(false);
+ValueNotifier<bool> _showFullPlayer = ValueNotifier(false);
+
+// Entry point of the application
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  // Load saved theme preference
+  final prefs = await SharedPreferences.getInstance();
+  final savedTheme = prefs.getString('app_theme');
+  themeNotifier.value =
+      savedTheme == 'dark'
+          ? ThemeMode.dark
+          : savedTheme == 'light'
+          ? ThemeMode.light
+          : ThemeMode.system;
+  // Initialize audio handler with configuration
   _audioHandler = await AudioService.init(
     builder: () => CustomAudioHandler(),
     config: const AudioServiceConfig(
@@ -34,336 +54,35 @@ Future<void> main() async {
     ),
   );
 
-  Get.put(AppController());
-  Get.put(PlayerController());
-  Get.put(LibraryController());
-  Get.put(SleepTimerController());
-  Get.put(SearchController());
-
-  final libCtrl = Get.find<LibraryController>();
-  final playerCtrl = Get.find<PlayerController>();
-  await libCtrl.loadSavedSongs();
-  await playerCtrl.loadLastState();
-
+  Get.put(SleepTimerController()); // For Sleep Timer
   runApp(const MyApp());
 }
 
-// Controllers
-class AppController extends GetxController {
-  Rx<ThemeMode> themeMode = ThemeMode.system.obs;
-  RxBool isPlayerBgImage = false.obs;
-  RxBool showFullPlayer = false.obs;
-
+/// Root widget of the application
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
   @override
-  void onInit() {
-    super.onInit();
-    _loadAppConfig();
-  }
-
-  Future<void> _loadAppConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedTheme = prefs.getString('app_theme');
-    final savedPlayerBgState = prefs.getBool('is_player_bg_image');
-    themeMode.value =
-        savedTheme == 'dark'
-            ? ThemeMode.dark
-            : savedTheme == 'light'
-            ? ThemeMode.light
-            : ThemeMode.system;
-    isPlayerBgImage.value = savedPlayerBgState ?? false;
-  }
-
-  Future<void> toggleTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    final newTheme =
-        themeMode.value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-    themeMode.value = newTheme;
-    await prefs.setString(
-      'app_theme',
-      newTheme == ThemeMode.dark ? 'dark' : 'light',
-    );
-  }
-
-  Future<void> tooglePlayerBackGround() async {
-    final prefs = await SharedPreferences.getInstance();
-    final newState = isPlayerBgImage.value == true ? false : true;
-    isPlayerBgImage.value = newState;
-    await prefs.setBool('is_player_bg_image', newState == true ? true : false);
-  }
-}
-
-class PlayerController extends GetxController {
-  Rx<AudioServiceRepeatMode> repeatMode = AudioServiceRepeatMode.none.obs;
-  RxBool shuffleMode = false.obs;
-  RxString? currentId = RxString("");
-
-  StreamSubscription<PlaybackState>? _playbackSubscription;
-  StreamSubscription<MediaItem?>? _mediaItemSubscription;
-  StreamSubscription<List<MediaItem>>? _queueSubscription;
-
-  @override
-  void onInit() {
-    super.onInit();
-    _playbackSubscription = _audioHandler.playbackState.stream.listen((state) {
-      repeatMode.value = state.repeatMode;
-      shuffleMode.value = state.shuffleMode == AudioServiceShuffleMode.all;
-    });
-    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
-      currentId!.value = item!.id;
-      _saveCurrentState();
-    });
-    _queueSubscription = _audioHandler.queue.stream.listen(
-      (_) => _saveCurrentState(),
-    );
-  }
-
-  @override
-  void onClose() {
-    _playbackSubscription?.cancel();
-    _mediaItemSubscription?.cancel();
-    _queueSubscription?.cancel();
-    super.onClose();
-  }
-
-  Future<void> toggleShuffle() async {
-    final old = shuffleMode.value;
-    shuffleMode.value = !old;
-    try {
-      await (_audioHandler as CustomAudioHandler).toggleShuffle();
-    } catch (e) {
-      shuffleMode.value = old;
-    }
-  }
-
-  Future<void> cycleRepeat() async {
-    final old = repeatMode.value;
-    final next = switch (old) {
-      AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
-      AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
-      _ => AudioServiceRepeatMode.none,
-    };
-    repeatMode.value = next;
-    try {
-      await (_audioHandler as CustomAudioHandler).setRepeatMode(next);
-    } catch (e) {
-      repeatMode.value = old;
-    }
-  }
-
-  Future<void> _saveCurrentState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentQueue = _audioHandler.queue.value;
-    if (currentQueue.isEmpty) return;
-    final queueList =
-        currentQueue
-            .map(
-              (item) => {
-                'id': item.id,
-                'title': item.title,
-                'artist': item.artist,
-                'album': item.album,
-                'duration': item.duration?.inMilliseconds,
-                'artUri': item.artUri?.toString(),
-              },
-            )
-            .toList();
-    await prefs.setString('last_queue', json.encode(queueList));
-    await prefs.setInt(
-      'last_index',
-      _audioHandler.playbackState.value.queueIndex ?? 0,
-    );
-    await prefs.setInt('last_position', 0); // Reset position for next launch
-  }
-
-  Future<void> loadLastState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastQueueJson = prefs.getString('last_queue');
-    if (lastQueueJson == null) return;
-    final lastQueueList = json.decode(lastQueueJson) as List<dynamic>;
-    final items = <MediaItem>[];
-    final sources = <AudioSource>[];
-    for (final map in lastQueueList) {
-      final id = map['id'] as String;
-      final item = MediaItem(
-        id: id,
-        title: map['title'] as String? ?? 'Unknown Title',
-        artist: map['artist'] as String?,
-        album: map['album'] as String?,
-        duration: Duration(milliseconds: map['duration'] as int? ?? 0),
-        artUri:
-            map['artUri'] != null ? Uri.parse(map['artUri'] as String) : null,
-      );
-      items.add(item);
-      sources.add(AudioSource.uri(Uri.parse(id), tag: item));
-    }
-    if (items.isNotEmpty) {
-      final lastIndex = prefs.getInt('last_index') ?? 0;
-      final lastPosition = Duration(
-        milliseconds: prefs.getInt('last_position') ?? 0,
-      );
-      await (_audioHandler as CustomAudioHandler).loadPlaylist(
-        items,
-        sources,
-        initialIndex: lastIndex,
-      );
-      await _audioHandler.pause();
-      await _audioHandler.seek(lastPosition);
-    }
-  }
-}
-
-class LibraryController extends GetxController {
-  final LocalMusicScanner scanner = LocalMusicScanner();
-  RxList<SongInfo> musicFiles = <SongInfo>[].obs;
-  RxBool isScanning = false.obs;
-  RxString? message = RxString("");
-
-  Future<void> loadSavedSongs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedSongsJson = prefs.getString('saved_songs');
-    if (savedSongsJson == null) {
-      message!.value = 'No saved songs found. Scan to find songs.';
-      return;
-    }
-    try {
-      final savedList = json.decode(savedSongsJson) as List<dynamic>;
-      final loadedSongs = <SongInfo>[];
-      for (final map in savedList) {
-        final song = await SongInfo.fromJson(
-          Map<String, dynamic>.from(map as Map),
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, mode, __) {
+        return GetMaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Rhythm Player',
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: mode,
+          home: const MainScreen(),
+          builder: (context, child) {
+            return GlobalWrapper(child: child!);
+          },
         );
-        if (song != null) loadedSongs.add(song);
-      }
-      musicFiles.value = loadedSongs;
-      message!.value = 'Loaded ${loadedSongs.length} saved songs.';
-    } catch (e) {
-      message!.value = 'Failed to load saved songs.';
-    }
-  }
-
-  Future<void> saveSongs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final musicLists = musicFiles.map((item) => item.toJson()).toList();
-    await prefs.setString('saved_songs', json.encode(musicLists));
-  }
-
-  Future<void> startScan() async {
-    isScanning.value = true;
-    musicFiles.clear();
-    message!.value = 'Requesting permissions...';
-    final granted = await scanner.requestPermission();
-    if (!granted) {
-      isScanning.value = false;
-      message!.value = 'Storage permission denied. Cannot scan local files.';
-      return;
-    }
-    message!.value = 'Scanning directories...';
-    try {
-      final foundSongs = await scanner.startSafeAutoScan();
-      musicFiles.value = foundSongs;
-      message!.value = 'Found ${foundSongs.length} songs.';
-      await saveSongs();
-    } catch (e) {
-      message!.value = 'Scan failed: $e';
-    } finally {
-      isScanning.value = false;
-    }
-  }
-
-  Future<void> selectAndScanFolder() async {
-    final directoryPath = await FilePicker.platform.getDirectoryPath();
-    if (directoryPath == null) return;
-    isScanning.value = true;
-    musicFiles.clear();
-    message!.value = 'Requesting permissions...';
-    final granted = await scanner.requestPermission();
-    if (!granted) {
-      isScanning.value = false;
-      message!.value =
-          'Storage permission denied. Cannot scan selected folder.';
-      return;
-    }
-    message!.value = 'Scanning selected folder...';
-    try {
-      final foundSongs = await scanner.scanDirectory(directoryPath);
-      musicFiles.value = foundSongs;
-      message!.value = 'Found ${foundSongs.length} songs in selected folder.';
-      await saveSongs();
-    } catch (e) {
-      message!.value = 'Scan failed: $e';
-    } finally {
-      isScanning.value = false;
-    }
+      },
+    );
   }
 }
 
-class SleepTimerController extends GetxController {
-  Timer? _sleepTimer;
-  Timer? _updateTimer;
-  Rx<Duration> remaining = Rx(Duration.zero);
-  RxBool isActive = RxBool(false);
-
-  void setSleepTimer(Duration duration) {
-    _sleepTimer?.cancel();
-    _updateTimer?.cancel();
-
-    if (duration == Duration.zero) {
-      isActive.value = false;
-      remaining.value = Duration.zero;
-      return;
-    }
-
-    remaining.value = duration;
-    isActive.value = true;
-
-    _sleepTimer = Timer(duration, () {
-      isActive.value = false;
-      remaining.value = Duration.zero;
-    });
-
-    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      remaining.value -= const Duration(seconds: 1);
-      if (remaining.value <= Duration.zero) {
-        timer.cancel();
-        remaining.value = Duration.zero;
-        (_audioHandler as CustomAudioHandler).stop();
-        Get.snackbar(
-          'Sleep Timer',
-          'Your Sleep Timer Has Ended',
-        );
-
-      }
-    });
-  }
-
-  @override
-  void onClose() {
-    _sleepTimer?.cancel();
-    _updateTimer?.cancel();
-    super.onClose();
-  }
-}
-
-class SearchController extends GetxController {
-  RxString searchQuery = ''.obs;
-  final TextEditingController searchTextController = TextEditingController();
-
-  @override
-  void onInit() {
-    super.onInit();
-    searchTextController.addListener(() {
-      searchQuery.value = searchTextController.text.toLowerCase();
-    });
-  }
-
-  @override
-  void onClose() {
-    searchTextController.dispose();
-    super.onClose();
-  }
-}
-
-// Utility class
+/// Utility class for common functions
 class AppUtils {
   static String formatDuration(Duration duration) {
     if (duration == Duration.zero) return '--:--';
@@ -385,7 +104,7 @@ class AppUtils {
   }
 
   static Uri? getArtistArt(List<SongInfo> songs) {
-    return getAlbumArt(songs);
+    return getAlbumArt(songs); // Reuse the same logic for artist art
   }
 
   static IconData getProcessingIcon(AudioProcessingState state) {
@@ -399,7 +118,7 @@ class AppUtils {
   }
 }
 
-// Reusable SongTile (stateless)
+/// Reusable widget for song tile
 class SongTile extends StatelessWidget {
   final SongInfo song;
   final bool isCurrent;
@@ -427,10 +146,13 @@ class SongTile extends StatelessWidget {
     final subtitleStyle = TextStyle(color: Colors.grey[600]);
     final duration = Duration(milliseconds: song.meta.durationMs ?? 0);
     final formattedDuration = AppUtils.formatDuration(duration);
+
     Widget leading;
     Widget? subtitleWidget;
     Widget? trailing;
+
     if (trackNumber != null) {
+      // Album mode: number or eq left, duration right, no subtitle
       leading =
           isCurrent
               ? Icon(Icons.bar_chart_rounded)
@@ -438,6 +160,7 @@ class SongTile extends StatelessWidget {
       subtitleWidget = null;
       trailing = Text(formattedDuration, style: subtitleStyle);
     } else {
+      // General mode: art left, artist subtitle, eq right if current
       leading = SizedBox(
         width: 48,
         height: 48,
@@ -457,6 +180,7 @@ class SongTile extends StatelessWidget {
               ? Icon(Icons.bar_chart_rounded, color: theme.colorScheme.primary)
               : null;
     }
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       minVerticalPadding: 0,
@@ -468,9 +192,7 @@ class SongTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       subtitle: subtitleWidget,
-      trailing:
-          trailing ??
-          (showDuration ? Text(formattedDuration, style: subtitleStyle) : null),
+      trailing: trailing,
       onTap: onTap,
       shape: const Border(bottom: BorderSide(color: Colors.grey, width: 0.1)),
     );
@@ -499,7 +221,7 @@ class SongTile extends StatelessWidget {
   }
 }
 
-// Reusable OnlineTile (stateless)
+/// Reusable widget for online item tile
 class OnlineTile extends StatelessWidget {
   final MediaItem item;
   final bool isCurrent;
@@ -521,6 +243,8 @@ class OnlineTile extends StatelessWidget {
           isCurrent ? theme.colorScheme.primary : theme.colorScheme.onSurface,
     );
     final subtitleStyle = TextStyle(color: Colors.grey[600]);
+    // final formattedDuration = AppUtils.formatDuration(item.duration ?? Duration.zero);
+
     Widget leading = SizedBox(
       width: 48,
       height: 48,
@@ -533,6 +257,7 @@ class OnlineTile extends StatelessWidget {
         isCurrent
             ? Icon(Icons.bar_chart_rounded, color: theme.colorScheme.primary)
             : null;
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       minVerticalPadding: 0,
@@ -567,11 +292,12 @@ class OnlineTile extends StatelessWidget {
                   const Icon(Icons.cloud_queue_outlined),
         );
       } else {
-        return CachedNetworkImage(
-          imageUrl: uri.toString(),
+        return Image.network(
+          uri.toString(),
           fit: BoxFit.cover,
-          errorWidget:
-              (context, url, error) => const Icon(Icons.cloud_queue_outlined),
+          errorBuilder:
+              (context, error, stackTrace) =>
+                  const Icon(Icons.cloud_queue_outlined),
         );
       }
     } else {
@@ -580,46 +306,282 @@ class OnlineTile extends StatelessWidget {
   }
 }
 
-// Static online items
-final List<MediaItem> onlineItems = [
-  MediaItem(
-    id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
-    album: "Science Friday",
-    title: "A Salute To Head-Scratching Science (Online)",
-    artist: "Science Friday and WNYC Studios",
-    duration: const Duration(milliseconds: 5739820),
-    artUri: Uri.parse(
-      'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
-    ),
-  ),
-  MediaItem(
-    id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3',
-    title: 'A Good Bass for Gambling',
-    artist: 'Kevin MacLeod',
-    album: 'FreePD',
-    duration: Duration.zero,
-  ),
-  MediaItem(
-    id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3',
-    title: 'A Surprising Encounter',
-    artist: 'Kevin MacLeod',
-    album: 'FreePD',
-    duration: Duration.zero,
-  ),
-];
-
-// MainScreen (GetView)
-class MainScreen extends GetView<LibraryController> {
+/// Main screen of the app handling music library and player UI
+class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
+  @override
+  _MainScreenState createState() => _MainScreenState();
+}
 
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+  // Scanner for local music files
+  final LocalMusicScanner _scanner = LocalMusicScanner();
+  // List of discovered local songs
+  List<SongInfo> _musicFiles = [];
+  // Flag for ongoing scanning operation
+  bool _isScanning = false;
+  // Message for scanning status or errors
+  String? _message;
+  // ID of the currently playing song
+  String? _currentId;
+  // Subscription to media item changes
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+  // Static list of online demo songs
+  static final List<MediaItem> _onlineItems = [
+    MediaItem(
+      id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
+      album: "Science Friday",
+      title: "A Salute To Head-Scratching Science (Online)",
+      artist: "Science Friday and WNYC Studios",
+      duration: const Duration(milliseconds: 5739820),
+      artUri: Uri.parse(
+        'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
+      ),
+    ),
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3 ',
+      title: 'A Good Bass for Gambling',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+    MediaItem(
+      id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3 ',
+      title: 'A Surprising Encounter',
+      artist: 'Kevin MacLeod',
+      album: 'FreePD',
+      duration: Duration.zero,
+    ),
+  ];
+  // Global key for Scaffold to open endDrawer
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Update notifiers on playback state changes
+    _audioHandler.playbackState.stream.listen((state) {
+      repeatModeNotifier.value = state.repeatMode;
+      shuffleNotifier.value = state.shuffleMode == AudioServiceShuffleMode.all;
+    });
+    // Subscribe to media item updates
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      _saveCurrentState();
+      setState(() => _currentId = item?.id);
+    });
+    // Subscribe to queue changes
+    _audioHandler.queue.stream.listen((_) => _saveCurrentState());
+    // Load saved data asynchronously
+    _loadSavedSongs();
+    _loadLastState();
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    repeatModeNotifier.dispose();
+    shuffleNotifier.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _saveCurrentState();
+    }
+  }
+
+  // Check if a song is currently playing
+  bool _isCurrent(String id) => id == _currentId;
+  // Toggle between light and dark theme
+  Future<void> _toggleTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentTheme = themeNotifier.value;
+    final newTheme =
+        currentTheme == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    themeNotifier.value = newTheme;
+    await prefs.setString(
+      'app_theme',
+      newTheme == ThemeMode.dark ? 'dark' : 'light',
+    );
+  }
+
+  // Load saved local songs from preferences
+  Future<void> _loadSavedSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedSongsJson = prefs.getString('saved_songs');
+    if (savedSongsJson == null) {
+      setState(() => _message = 'No saved songs found. Scan to find songs.');
+      return;
+    }
+    try {
+      final savedList = json.decode(savedSongsJson) as List<dynamic>;
+      final loadedSongs = <SongInfo>[];
+      for (final map in savedList) {
+        final song = await SongInfo.fromJson(
+          Map<String, dynamic>.from(map as Map),
+        );
+        if (song != null) loadedSongs.add(song);
+      }
+      setState(() {
+        _musicFiles = loadedSongs;
+        _message = 'Loaded ${loadedSongs.length} saved songs.';
+      });
+    } catch (e) {
+      setState(() => _message = 'Failed to load saved songs.');
+    }
+  }
+
+  // Save current list of songs to preferences
+  Future<void> _saveSongs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final musicLists = _musicFiles.map((item) => item.toJson()).toList();
+    await prefs.setString('saved_songs', json.encode(musicLists));
+  }
+
+  // Load last playback state
+  Future<void> _loadLastState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastQueueJson = prefs.getString('last_queue');
+    if (lastQueueJson == null) return;
+    final lastQueueList = json.decode(lastQueueJson) as List<dynamic>;
+    final items = <MediaItem>[];
+    final sources = <AudioSource>[];
+    for (final map in lastQueueList) {
+      final id = map['id'] as String;
+      final item = MediaItem(
+        id: id,
+        title: map['title'] as String? ?? 'Unknown Title',
+        artist: map['artist'] as String?,
+        album: map['album'] as String?,
+        duration: Duration(milliseconds: map['duration'] as int? ?? 0),
+        artUri:
+            map['artUri'] != null ? Uri.parse(map['artUri'] as String) : null,
+      );
+      items.add(item);
+      sources.add(AudioSource.uri(Uri.parse(id), tag: item));
+    }
+    if (items.isNotEmpty) {
+      final lastIndex = prefs.getInt('last_index') ?? 0;
+      final lastPosition = Duration(
+        milliseconds: prefs.getInt('last_position') ?? 0,
+      );
+      await (_audioHandler as CustomAudioHandler).loadPlaylist(
+        items,
+        sources,
+        initialIndex: lastIndex,
+      );
+      await _audioHandler.pause();
+      await _audioHandler.seek(lastPosition);
+    }
+  }
+
+  // Save current playback state
+  Future<void> _saveCurrentState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentQueue = _audioHandler.queue.value;
+    if (currentQueue.isEmpty) return;
+    final queueList =
+        currentQueue
+            .map(
+              (item) => {
+                'id': item.id,
+                'title': item.title,
+                'artist': item.artist,
+                'album': item.album,
+                'duration': item.duration?.inMilliseconds,
+                'artUri': item.artUri?.toString(),
+              },
+            )
+            .toList();
+    await prefs.setString('last_queue', json.encode(queueList));
+    await prefs.setInt(
+      'last_index',
+      _audioHandler.playbackState.value.queueIndex ?? 0,
+    );
+    await prefs.setInt('last_position', 0); // Reset position for next launch
+  }
+
+  // Start automatic scan for local music
+  Future<void> _startScan() async {
+    setState(() {
+      _isScanning = true;
+      _musicFiles = [];
+      _message = 'Requesting permissions...';
+    });
+    final granted = await _scanner.requestPermission();
+    if (!granted) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Storage permission denied. Cannot scan local files.';
+      });
+      return;
+    }
+    setState(() => _message = 'Scanning directories...');
+    try {
+      final foundSongs = await _scanner.startSafeAutoScan();
+      setState(() {
+        _musicFiles = foundSongs;
+        _message = 'Found ${foundSongs.length} songs.';
+      });
+      await _saveSongs();
+    } catch (e) {
+      setState(() => _message = 'Scan failed: $e');
+    } finally {
+      setState(() => _isScanning = false);
+    }
+  }
+
+  // Scan selected folder for local music
+  Future<void> _selectAndScanFolder() async {
+    final directoryPath = await FilePicker.platform.getDirectoryPath();
+    if (directoryPath == null) return;
+    setState(() {
+      _isScanning = true;
+      _musicFiles = [];
+      _message = 'Requesting permissions...';
+    });
+    final granted = await _scanner.requestPermission();
+    if (!granted) {
+      setState(() {
+        _isScanning = false;
+        _message = 'Storage permission denied. Cannot scan selected folder.';
+      });
+      return;
+    }
+    setState(() => _message = 'Scanning selected folder...');
+    try {
+      final foundSongs = await _scanner.scanDirectory(directoryPath);
+      setState(() {
+        _musicFiles = foundSongs;
+        _message = 'Found ${foundSongs.length} songs in selected folder.';
+      });
+      await _saveSongs();
+    } catch (e) {
+      setState(() => _message = 'Scan failed: $e');
+    } finally {
+      setState(() => _isScanning = false);
+    }
+  }
+
+  // Play local playlist starting from index
   void _playLocalSongs(List<SongInfo> playlist, int index) {
     (_audioHandler as CustomAudioHandler).playLocalPlaylist(playlist, index);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Playing: ${playlist[index].meta.title}')),
+    );
   }
 
+  // Play online playlist starting from index
   void _playOnlineSongs(List<MediaItem> items, int index) {
     (_audioHandler as CustomAudioHandler).playOnlinePlaylist(items, index);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Playing: ${items[index].title}')));
   }
 
+  // Build tab content based on index
   Widget _buildTabContent(int index) {
     switch (index) {
       case 0:
@@ -637,51 +599,56 @@ class MainScreen extends GetView<LibraryController> {
     }
   }
 
+  // Build tab for all songs
   Widget _buildSongsTab() {
-    if (controller.musicFiles.isEmpty) {
+    if (_musicFiles.isEmpty) {
       return const Center(child: Text('No local songs found.'));
     }
     return ListView.builder(
-      itemCount: controller.musicFiles.length,
-      padding: const EdgeInsets.only(bottom: 210),
+      itemCount: _musicFiles.length,
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
-        final song = controller.musicFiles[index];
+        final song = _musicFiles[index];
         final songId = Uri.file(song.file.path).toString();
-        return Obx(
-          () => SongTile(
-            song: song,
-            isCurrent: Get.find<PlayerController>().currentId!.value == songId,
-            onTap: () => _playLocalSongs(controller.musicFiles, index),
-          ),
+        return SongTile(
+          song: song,
+          isCurrent: _isCurrent(songId),
+          onTap: () => _playLocalSongs(_musicFiles, index),
         );
       },
     );
   }
 
+  // Build tab for online (using online items as placeholder)
   Widget _buildOnlineTab() {
-    if (onlineItems.isEmpty) {
+    if (_onlineItems.isEmpty) {
       return const Center(child: Text('No online found.'));
     }
     return ListView.builder(
-      itemCount: onlineItems.length,
-      padding: const EdgeInsets.only(bottom: 210),
+      itemCount: _onlineItems.length,
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
-        final item = onlineItems[index];
+        final item = _onlineItems[index];
         return OnlineTile(
           item: item,
-          isCurrent: Get.find<PlayerController>().currentId!.value == item.id,
-          onTap: () => _playOnlineSongs(onlineItems, index),
+          isCurrent: _isCurrent(item.id),
+          onTap: () => _playOnlineSongs(_onlineItems, index),
         );
       },
     );
   }
 
+  // Build tab for artists
   Widget _buildArtistsTab() {
-    if (controller.musicFiles.isEmpty) {
+    if (_musicFiles.isEmpty) {
       return const Center(child: Text('No local artists found.'));
     }
     final artists = <String, List<SongInfo>>{};
-    for (final song in controller.musicFiles) {
+    for (final song in _musicFiles) {
       artists.putIfAbsent(song.meta.artist, () => []).add(song);
     }
     final artistList = artists.keys.toList()..sort();
@@ -690,7 +657,9 @@ class MainScreen extends GetView<LibraryController> {
     }
     return ListView.builder(
       itemCount: artistList.length,
-      padding: const EdgeInsets.only(bottom: 210),
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final artist = artistList[index];
         final songs = artists[artist]!;
@@ -700,8 +669,13 @@ class MainScreen extends GetView<LibraryController> {
             title: Text(artist),
             subtitle: Text('${songs.length} songs'),
             onTap:
-                () => Get.to(
-                  () => ArtistDetailScreen(artist: artist, songs: songs),
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            ArtistDetailScreen(artist: artist, songs: songs),
+                  ),
                 ),
           ),
         );
@@ -709,12 +683,13 @@ class MainScreen extends GetView<LibraryController> {
     );
   }
 
+  // Build tab for albums with grid view
   Widget _buildAlbumsTab() {
-    if (controller.musicFiles.isEmpty) {
+    if (_musicFiles.isEmpty) {
       return const Center(child: Text('No local albums found.'));
     }
     final albums = <String, List<SongInfo>>{};
-    for (final song in controller.musicFiles) {
+    for (final song in _musicFiles) {
       albums.putIfAbsent(song.meta.album, () => []).add(song);
     }
     final albumList = albums.keys.toList()..sort();
@@ -737,12 +712,16 @@ class MainScreen extends GetView<LibraryController> {
         final artist = songs.first.meta.artist;
         return GestureDetector(
           onTap:
-              () => Get.to(
-                () => AlbumDetailScreen(
-                  album: album,
-                  artist: artist,
-                  songs: songs,
-                  artUri: artUri,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => AlbumDetailScreen(
+                        album: album,
+                        artist: artist,
+                        songs: songs,
+                        artUri: artUri,
+                      ),
                 ),
               ),
           child: Column(
@@ -784,12 +763,13 @@ class MainScreen extends GetView<LibraryController> {
     );
   }
 
+  // Build tab for folders
   Widget _buildFoldersTab() {
-    if (controller.musicFiles.isEmpty) {
+    if (_musicFiles.isEmpty) {
       return const Center(child: Text('No folders found.'));
     }
     final folders = <String, List<SongInfo>>{};
-    for (final song in controller.musicFiles) {
+    for (final song in _musicFiles) {
       final dir = path.dirname(song.file.path);
       folders.putIfAbsent(dir, () => []).add(song);
     }
@@ -799,7 +779,9 @@ class MainScreen extends GetView<LibraryController> {
     }
     return ListView.builder(
       itemCount: folderList.length,
-      padding: const EdgeInsets.only(bottom: 210),
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final folder = folderList[index];
         final songs = folders[folder]!;
@@ -809,8 +791,13 @@ class MainScreen extends GetView<LibraryController> {
             title: Text(path.basename(folder)),
             subtitle: Text('${songs.length} songs'),
             onTap:
-                () => Get.to(
-                  () => FolderDetailScreen(folder: folder, songs: songs),
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            FolderDetailScreen(folder: folder, songs: songs),
+                  ),
                 ),
           ),
         );
@@ -824,61 +811,76 @@ class MainScreen extends GetView<LibraryController> {
     return DefaultTabController(
       length: 5,
       child: Scaffold(
-        drawer: AppDrawer(),
-        body: Obx(
-          () => Stack(
-            children: [
-              NestedScrollView(
-                headerSliverBuilder: (context, innerBoxIsScrolled) {
-                  return <Widget>[
-                    SliverAppBar(
-                      floating: true,
-                      pinned: true,
-                      title: GestureDetector(
-                        onTap: () => Get.to(() => SearchScreen()),
-                        child: AbsorbPointer(
-                          child: SizedBox(
-                            height: 40,
-                            child: TextField(
-                              decoration: InputDecoration(
-                                hintText:
-                                    'Search songs, playlists, and artists',
-                                suffixIcon: const Icon(Icons.search_rounded),
-                                contentPadding: const EdgeInsets.only(
-                                  top: 5,
-                                  left: 15,
-                                  right: 5,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(30.0),
-                                ),
-                                filled: true,
-                                fillColor:
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.surfaceVariant,
+        key: _scaffoldKey,
+        drawer: AppDrawer(
+          themeNotifier: themeNotifier,
+          showBlurImagePlayerBg: _showBlurImagePlayerBg,
+          startScan: _startScan,
+          selectAndScanFolder: _selectAndScanFolder,
+          toggleTheme: _toggleTheme,
+        ),
+        body: Stack(
+          children: [
+            NestedScrollView(
+              headerSliverBuilder: (
+                BuildContext context,
+                bool innerBoxIsScrolled,
+              ) {
+                return <Widget>[
+                  SliverAppBar(
+                    floating: true,
+                    pinned: true,
+                    title: GestureDetector(
+                      onTap: () {
+                        Get.to(
+                          () => SearchScreen(
+                            musicFiles: _musicFiles,
+                            onlineItems: _onlineItems,
+                          ),
+                        );
+                      },
+                      child: AbsorbPointer(
+                        child: SizedBox(
+                          height: 40,
+                          child: TextField(
+                            decoration: InputDecoration(
+                              hintText: 'Search songs, playlists, and artists',
+                              suffixIcon: const Icon(Icons.search_rounded),
+                              contentPadding: const EdgeInsets.only(
+                                top: 5,
+                                left: 15,
+                                right: 5,
                               ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(30.0),
+                              ),
+                              filled: true,
+                              fillColor:
+                                  Theme.of(context).colorScheme.surfaceVariant,
                             ),
                           ),
                         ),
                       ),
-                      bottom: const TabBar(
-                        unselectedLabelColor: Colors.grey,
-                        tabs: [
-                          Tab(text: 'Songs'),
-                          Tab(text: 'Online'),
-                          Tab(text: 'Artists'),
-                          Tab(text: 'Albums'),
-                          Tab(text: 'Folders'),
-                        ],
-                      ),
                     ),
-                  ];
-                },
-                body: Column(
-                  children: [
+                    bottom: const TabBar(
+                      unselectedLabelColor: Colors.grey,
+                      tabs: [
+                        Tab(text: 'Songs'),
+                        Tab(text: 'Online'),
+                        Tab(text: 'Artists'),
+                        Tab(text: 'Albums'),
+                        Tab(text: 'Folders'),
+                      ],
+                    ),
+                  ),
+                ];
+              },
+              body: Column(
+                children: [
+                  if (_message != null)
                     Container(
-                      color: theme.colorScheme.surfaceContainerHighest,
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -889,7 +891,7 @@ class MainScreen extends GetView<LibraryController> {
                         children: [
                           Expanded(
                             child: Text(
-                              controller.message!.value,
+                              _message ?? '${_musicFiles.length} songs',
                               style: TextStyle(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
@@ -898,324 +900,408 @@ class MainScreen extends GetView<LibraryController> {
                         ],
                       ),
                     ),
-                    Expanded(
-                      child: TabBarView(
-                        children: List.generate(
-                          5,
-                          (index) => _buildTabContent(index),
-                        ),
+                  Expanded(
+                    child: TabBarView(
+                      children: List.generate(
+                        5,
+                        (index) => _buildTabContent(index),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              if (controller.isScanning.value)
-                const Center(child: CircularProgressIndicator()),
-            ],
-          ),
+            ),
+            if (_isScanning) const Center(child: CircularProgressIndicator()),
+          ],
         ),
       ),
     );
   }
 }
 
-// AppDrawer (stateless)
-class AppDrawer extends StatelessWidget {
-  AppDrawer({super.key});
+// App Drawer
 
-  final LibraryController libCtrl = Get.find<LibraryController>();
-  final AppController appCtrl = Get.find<AppController>();
+class AppDrawer extends StatelessWidget {
+  final ValueNotifier<ThemeMode> themeNotifier;
+  final ValueNotifier<bool> showBlurImagePlayerBg;
+  final VoidCallback _startScan;
+  final VoidCallback _selectAndScanFolder;
+  final VoidCallback _toggleTheme;
+
+  const AppDrawer({
+    super.key,
+    required this.themeNotifier,
+    required this.showBlurImagePlayerBg,
+    required VoidCallback startScan,
+    required VoidCallback selectAndScanFolder,
+    required VoidCallback toggleTheme,
+  }) : _startScan = startScan,
+       _selectAndScanFolder = selectAndScanFolder,
+       _toggleTheme = toggleTheme;
 
   @override
   Widget build(BuildContext context) {
     return Drawer(
       child: SafeArea(
-        child: Obx(
-          () => ListView(
-            padding: const EdgeInsets.only(bottom: 210),
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.search),
-                title: const Text('Scan Local Files (Automatic)'),
-                onTap: () {
-                  Get.back();
-                  libCtrl.startScan();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('Select Folder to Scan'),
-                onTap: () {
-                  Get.back();
-                  libCtrl.selectAndScanFolder();
-                },
-              ),
-              const Divider(),
-              ListTile(
-                leading: Icon(
-                  appCtrl.themeMode.value == ThemeMode.dark
-                      ? Icons.light_mode
-                      : Icons.dark_mode,
-                ),
-                title: const Text('Dark Mode'),
-                trailing: CupertinoSwitch(
-                  value: appCtrl.themeMode.value == ThemeMode.dark,
-                  onChanged: (_) => appCtrl.toggleTheme(),
-                ),
-              ),
-              ListTile(
-                leading: Icon(Icons.image_outlined),
-                title: const Text('Image in Player Background'),
-                trailing: CupertinoSwitch(
-                  value: appCtrl.isPlayerBgImage.value,
-                  onChanged: (value) => appCtrl.tooglePlayerBackGround(),
-                ),
-              ),
-            ],
-          ),
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 210),
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: const Text('Scan Local Files (Automatic)'),
+              onTap: () {
+                Navigator.pop(context);
+                _startScan();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder),
+              title: const Text('Select Folder to Scan'),
+              onTap: () {
+                Navigator.pop(context);
+                _selectAndScanFolder();
+              },
+            ),
+            const Divider(),
+            // 🌙 Toggle Theme
+            ValueListenableBuilder<ThemeMode>(
+              valueListenable: themeNotifier,
+              builder: (context, mode, _) {
+                return ListTile(
+                  leading: Icon(
+                    mode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+                  ),
+                  title: const Text('Dark Mode'),
+                  trailing: CupertinoSwitch(
+                    value: mode == ThemeMode.dark,
+                    onChanged: (value) {
+                      _toggleTheme();
+                    },
+                  ),
+                );
+              },
+            ),
+            // 🖼️ Toggle Blur Image Player Background
+            ValueListenableBuilder<bool>(
+              valueListenable: showBlurImagePlayerBg,
+              builder: (context, value, _) {
+                return ListTile(
+                  leading: Icon(
+                    value
+                        ? Icons.image_not_supported_outlined
+                        : Icons.image_rounded,
+                  ),
+                  title: const Text('Show Image On Bg of Player'),
+                  trailing: CupertinoSwitch(
+                    value: value,
+                    onChanged: (newValue) {
+                      showBlurImagePlayerBg.value = newValue;
+                    },
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// SearchScreen (GetView)
-class SearchScreen extends GetView<SearchController> {
-  SearchScreen({super.key});
+/// Search screen for handling search functionality
+class SearchScreen extends StatefulWidget {
+  final List<SongInfo> musicFiles;
+  final List<MediaItem> onlineItems;
+  const SearchScreen({
+    super.key,
+    required this.musicFiles,
+    required this.onlineItems,
+  });
+  @override
+  _SearchScreenState createState() => _SearchScreenState();
+}
 
-  final LibraryController libCtrl = Get.find<LibraryController>();
+class _SearchScreenState extends State<SearchScreen> {
+  // Search query for filtering
+  String _searchQuery = '';
+  // Text controller for search bar
+  final TextEditingController _searchController = TextEditingController();
+  // ID of the currently playing song
+  String? _currentId;
+  // Subscription to media item changes
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+  @override
+  void initState() {
+    super.initState();
+    // Subscribe to media item updates
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+    // Listen to search changes
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
 
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // Check if a song is currently playing
+  bool _isCurrent(String id) => id == _currentId;
+  // Play local playlist starting from index
   void _playLocalSongs(List<SongInfo> playlist, int index) {
     (_audioHandler as CustomAudioHandler).playLocalPlaylist(playlist, index);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Playing: ${playlist[index].meta.title}')),
+    );
   }
 
+  // Play online playlist starting from index
   void _playOnlineSongs(List<MediaItem> items, int index) {
     (_audioHandler as CustomAudioHandler).playOnlinePlaylist(items, index);
-    Get.snackbar('Playing', items[index].title);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Playing: ${items[index].title}')));
   }
 
+  // Build tab for all songs
   Widget _buildSongsTab() {
-    final playerCtrl = Get.find<PlayerController>();
-
     final filteredSongs =
-        libCtrl.musicFiles.where((song) {
+        widget.musicFiles.where((song) {
           final lowerTitle = song.meta.title.toLowerCase();
           final lowerArtist = song.meta.artist.toLowerCase();
           final lowerAlbum = song.meta.album.toLowerCase();
-          return lowerTitle.contains(controller.searchQuery.value) ||
-              lowerArtist.contains(controller.searchQuery.value) ||
-              lowerAlbum.contains(controller.searchQuery.value);
+          return lowerTitle.contains(_searchQuery) ||
+              lowerArtist.contains(_searchQuery) ||
+              lowerAlbum.contains(_searchQuery);
         }).toList();
-
+    if (filteredSongs.isEmpty) {
+      return const Center(child: Text('No matching songs found.'));
+    }
     return ListView.builder(
       itemCount: filteredSongs.length,
-      padding: const EdgeInsets.only(bottom: 210),
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
       itemBuilder: (context, index) {
         final song = filteredSongs[index];
         final songId = Uri.file(song.file.path).toString();
-        return Obx(
-          () => SongTile(
-            song: song,
-            isCurrent: playerCtrl.currentId!.value == songId,
-            onTap: () => _playLocalSongs(filteredSongs, index),
+        return SongTile(
+          song: song,
+          isCurrent: _isCurrent(songId),
+          onTap: () => _playLocalSongs(filteredSongs, index),
+        );
+      },
+    );
+  }
+
+  // Build tab for online (using online items)
+  Widget _buildOnlineTab() {
+    final filteredItems =
+        widget.onlineItems.where((item) {
+          final lowerTitle = item.title.toLowerCase();
+          final lowerArtist = (item.artist ?? '').toLowerCase();
+          final lowerAlbum = (item.album ?? '').toLowerCase();
+          return lowerTitle.contains(_searchQuery) ||
+              lowerArtist.contains(_searchQuery) ||
+              lowerAlbum.contains(_searchQuery);
+        }).toList();
+    if (filteredItems.isEmpty) {
+      return const Center(child: Text('No matching online found.'));
+    }
+    return ListView.builder(
+      itemCount: filteredItems.length,
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
+      itemBuilder: (context, index) {
+        final item = filteredItems[index];
+        return OnlineTile(
+          item: item,
+          isCurrent: _isCurrent(item.id),
+          onTap: () => _playOnlineSongs(filteredItems, index),
+        );
+      },
+    );
+  }
+
+  // Build tab for artists
+  Widget _buildArtistsTab() {
+    final artists = <String, List<SongInfo>>{};
+    for (final song in widget.musicFiles) {
+      final lowerArtist = song.meta.artist.toLowerCase();
+      if (lowerArtist.contains(_searchQuery) ||
+          song.meta.title.toLowerCase().contains(_searchQuery) ||
+          song.meta.album.toLowerCase().contains(_searchQuery)) {
+        artists.putIfAbsent(song.meta.artist, () => []).add(song);
+      }
+    }
+    final artistList = artists.keys.toList()..sort();
+    if (artistList.isEmpty) {
+      return const Center(child: Text('No matching artists found.'));
+    }
+    return ListView.builder(
+      itemCount: artistList.length,
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
+      itemBuilder: (context, index) {
+        final artist = artistList[index];
+        final songs = artists[artist]!;
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+          child: ListTile(
+            title: Text(artist),
+            subtitle: Text('${songs.length} songs'),
+            onTap:
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            ArtistDetailScreen(artist: artist, songs: songs),
+                  ),
+                ),
           ),
         );
       },
     );
   }
 
-  Widget _buildOnlineTab() {
-    return Obx(() {
-      final filteredItems =
-          onlineItems.where((item) {
-            final lowerTitle = item.title.toLowerCase();
-            final lowerArtist = (item.artist ?? '').toLowerCase();
-            final lowerAlbum = (item.album ?? '').toLowerCase();
-            return lowerTitle.contains(controller.searchQuery.value) ||
-                lowerArtist.contains(controller.searchQuery.value) ||
-                lowerAlbum.contains(controller.searchQuery.value);
-          }).toList();
-      if (filteredItems.isEmpty)
-        return const Center(child: Text('No matching online found.'));
-      return ListView.builder(
-        itemCount: filteredItems.length,
-        padding: const EdgeInsets.only(bottom: 210),
-        itemBuilder: (context, index) {
-          final item = filteredItems[index];
-          return OnlineTile(
-            item: item,
-            isCurrent: Get.find<PlayerController>().currentId!.value == item.id,
-            onTap: () => _playOnlineSongs(filteredItems, index),
-          );
-        },
-      );
-    });
-  }
-
-  Widget _buildArtistsTab() {
-    return Obx(() {
-      final artists = <String, List<SongInfo>>{};
-      for (final song in libCtrl.musicFiles) {
-        final lowerArtist = song.meta.artist.toLowerCase();
-        if (lowerArtist.contains(controller.searchQuery.value) ||
-            song.meta.title.toLowerCase().contains(
-              controller.searchQuery.value,
-            ) ||
-            song.meta.album.toLowerCase().contains(
-              controller.searchQuery.value,
-            )) {
-          artists.putIfAbsent(song.meta.artist, () => []).add(song);
-        }
-      }
-      final artistList = artists.keys.toList()..sort();
-      if (artistList.isEmpty)
-        return const Center(child: Text('No matching artists found.'));
-      return ListView.builder(
-        itemCount: artistList.length,
-        padding: const EdgeInsets.only(bottom: 210),
-        itemBuilder: (context, index) {
-          final artist = artistList[index];
-          final songs = artists[artist]!;
-          return Card(
-            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: ListTile(
-              title: Text(artist),
-              subtitle: Text('${songs.length} songs'),
-              onTap:
-                  () => Get.to(
-                    () => ArtistDetailScreen(artist: artist, songs: songs),
-                  ),
-            ),
-          );
-        },
-      );
-    });
-  }
-
+  // Build tab for albums with grid view
   Widget _buildAlbumsTab() {
-    return Obx(() {
-      final albums = <String, List<SongInfo>>{};
-      for (final song in libCtrl.musicFiles) {
-        final lowerAlbum = song.meta.album.toLowerCase();
-        if (lowerAlbum.contains(controller.searchQuery.value) ||
-            song.meta.title.toLowerCase().contains(
-              controller.searchQuery.value,
-            ) ||
-            song.meta.artist.toLowerCase().contains(
-              controller.searchQuery.value,
-            )) {
-          albums.putIfAbsent(song.meta.album, () => []).add(song);
-        }
+    final albums = <String, List<SongInfo>>{};
+    for (final song in widget.musicFiles) {
+      final lowerAlbum = song.meta.album.toLowerCase();
+      if (lowerAlbum.contains(_searchQuery) ||
+          song.meta.title.toLowerCase().contains(_searchQuery) ||
+          song.meta.artist.toLowerCase().contains(_searchQuery)) {
+        albums.putIfAbsent(song.meta.album, () => []).add(song);
       }
-      final albumList = albums.keys.toList()..sort();
-      if (albumList.isEmpty)
-        return const Center(child: Text('No matching albums found.'));
-      return GridView.builder(
-        padding: const EdgeInsets.only(bottom: 210, top: 20),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.85,
-          crossAxisSpacing: 5,
-          mainAxisSpacing: 5,
-        ),
-        itemCount: albumList.length,
-        itemBuilder: (context, index) {
-          final album = albumList[index];
-          final songs = albums[album]!;
-          final artUri = AppUtils.getAlbumArt(songs);
-          final artist = songs.first.meta.artist;
-          return GestureDetector(
-            onTap:
-                () => Get.to(
-                  () => AlbumDetailScreen(
-                    album: album,
-                    artist: artist,
-                    songs: songs,
-                    artUri: artUri,
-                  ),
+    }
+    final albumList = albums.keys.toList()..sort();
+    if (albumList.isEmpty) {
+      return const Center(child: Text('No matching albums found.'));
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.only(
+        bottom: 210,
+        top: 20,
+      ), // To Avoid Miniplayer Overlap
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.85,
+        crossAxisSpacing: 5,
+        mainAxisSpacing: 5,
+      ),
+      itemCount: albumList.length,
+      itemBuilder: (context, index) {
+        final album = albumList[index];
+        final songs = albums[album]!;
+        final artUri = AppUtils.getAlbumArt(songs);
+        final artist = songs.first.meta.artist;
+        return GestureDetector(
+          onTap:
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => AlbumDetailScreen(
+                        album: album,
+                        artist: artist,
+                        songs: songs,
+                        artUri: artUri,
+                      ),
                 ),
-            child: Column(
-              children: [
-                Container(
-                  height: 160,
-                  width: 160,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    image:
-                        artUri != null
-                            ? DecorationImage(
-                              image: FileImage(File(artUri.path)),
-                              fit: BoxFit.cover,
-                            )
-                            : null,
-                    color: Colors.grey[300],
-                  ),
-                  child:
-                      artUri == null ? const Icon(Icons.album, size: 60) : null,
+              ),
+          child: Column(
+            children: [
+              Container(
+                height: 160,
+                width: 160,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  image:
+                      artUri != null
+                          ? DecorationImage(
+                            image: FileImage(File(artUri.path)),
+                            fit: BoxFit.cover,
+                          )
+                          : null,
+                  color: Colors.grey[300],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  album,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    });
+                child:
+                    artUri == null ? const Icon(Icons.album, size: 60) : null,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                album,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
+  // Build tab for folders
   Widget _buildFoldersTab() {
-    return Obx(() {
-      final folders = <String, List<SongInfo>>{};
-      for (final song in libCtrl.musicFiles) {
-        final dir = path.dirname(song.file.path);
-        final lowerDir = dir.toLowerCase();
-        if (lowerDir.contains(controller.searchQuery.value) ||
-            song.meta.title.toLowerCase().contains(
-              controller.searchQuery.value,
-            ) ||
-            song.meta.artist.toLowerCase().contains(
-              controller.searchQuery.value,
-            ) ||
-            song.meta.album.toLowerCase().contains(
-              controller.searchQuery.value,
-            )) {
-          folders.putIfAbsent(dir, () => []).add(song);
-        }
+    final folders = <String, List<SongInfo>>{};
+    for (final song in widget.musicFiles) {
+      final dir = path.dirname(song.file.path);
+      final lowerDir = dir.toLowerCase();
+      if (lowerDir.contains(_searchQuery) ||
+          song.meta.title.toLowerCase().contains(_searchQuery) ||
+          song.meta.artist.toLowerCase().contains(_searchQuery) ||
+          song.meta.album.toLowerCase().contains(_searchQuery)) {
+        folders.putIfAbsent(dir, () => []).add(song);
       }
-      final folderList = folders.keys.toList()..sort();
-      if (folderList.isEmpty)
-        return const Center(child: Text('No matching folders found.'));
-      return ListView.builder(
-        itemCount: folderList.length,
-        padding: const EdgeInsets.only(bottom: 210),
-        itemBuilder: (context, index) {
-          final folder = folderList[index];
-          final songs = folders[folder]!;
-          return Card(
-            margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-            child: ListTile(
-              title: Text(path.basename(folder)),
-              subtitle: Text('${songs.length} songs'),
-              onTap:
-                  () => Get.to(
-                    () => FolderDetailScreen(folder: folder, songs: songs),
+    }
+    final folderList = folders.keys.toList()..sort();
+    if (folderList.isEmpty) {
+      return const Center(child: Text('No matching folders found.'));
+    }
+    return ListView.builder(
+      itemCount: folderList.length,
+      padding: const EdgeInsets.only(
+        bottom: 210,
+      ), // To Avoid Miniplayer Overlap
+      itemBuilder: (context, index) {
+        final folder = folderList[index];
+        final songs = folders[folder]!;
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+          child: ListTile(
+            title: Text(path.basename(folder)),
+            subtitle: Text('${songs.length} songs'),
+            onTap:
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (context) =>
+                            FolderDetailScreen(folder: folder, songs: songs),
                   ),
-            ),
-          );
-        },
-      );
-    });
+                ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -1224,7 +1310,7 @@ class SearchScreen extends GetView<SearchController> {
       length: 5,
       child: Scaffold(
         body: NestedScrollView(
-          headerSliverBuilder: (context, innerBoxIsScrolled) {
+          headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
             return <Widget>[
               SliverAppBar(
                 floating: true,
@@ -1232,7 +1318,7 @@ class SearchScreen extends GetView<SearchController> {
                 title: SizedBox(
                   height: 40,
                   child: TextField(
-                    controller: controller.searchTextController,
+                    controller: _searchController,
                     autofocus: true,
                     decoration: InputDecoration(
                       contentPadding: const EdgeInsets.only(
@@ -1278,8 +1364,8 @@ class SearchScreen extends GetView<SearchController> {
   }
 }
 
-// FolderDetailScreen (stateless)
-class FolderDetailScreen extends StatelessWidget {
+/// Screen for folder details
+class FolderDetailScreen extends StatefulWidget {
   final String folder;
   final List<SongInfo> songs;
 
@@ -1289,21 +1375,46 @@ class FolderDetailScreen extends StatelessWidget {
     required this.songs,
   });
 
+  @override
+  State<FolderDetailScreen> createState() => _FolderDetailScreenState();
+}
+
+class _FolderDetailScreenState extends State<FolderDetailScreen> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
+
   void _playSongs(int index, {bool shuffle = false}) {
     final handler = _audioHandler as CustomAudioHandler;
-    if (shuffle) Get.find<PlayerController>().toggleShuffle();
-    handler.playLocalPlaylist(songs, index);
+    if (shuffle) {
+      handler.toggleShuffle();
+    }
+    handler.playLocalPlaylist(widget.songs, index);
   }
 
   @override
   Widget build(BuildContext context) {
-    final playerCtrl = Get.find<PlayerController>();
     return Scaffold(
-      appBar: AppBar(title: Text(path.basename(folder))),
+      appBar: AppBar(title: Text(path.basename(widget.folder))),
       body: Column(
         children: [
           Text(
-            '${songs.length} songs',
+            '${widget.songs.length} songs',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           Row(
@@ -1322,16 +1433,14 @@ class FolderDetailScreen extends StatelessWidget {
           ),
           Expanded(
             child: ListView.builder(
-              itemCount: songs.length,
+              itemCount: widget.songs.length,
               itemBuilder: (context, index) {
-                final song = songs[index];
+                final song = widget.songs[index];
                 final songId = Uri.file(song.file.path).toString();
-                return Obx(
-                  () => SongTile(
-                    song: song,
-                    isCurrent: playerCtrl.currentId!.value == songId,
-                    onTap: () => _playSongs(index),
-                  ),
+                return SongTile(
+                  song: song,
+                  isCurrent: _isCurrent(songId),
+                  onTap: () => _playSongs(index),
                 );
               },
             ),
@@ -1342,10 +1451,9 @@ class FolderDetailScreen extends StatelessWidget {
   }
 }
 
-// MiniPlayer (stateless)
+/// Mini player widget that can be used across screens
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
-
   Stream<MediaState> get _mediaStateStream =>
       rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
         _audioHandler.mediaItem.stream,
@@ -1357,21 +1465,20 @@ class MiniPlayer extends StatelessWidget {
     final uri = item.artUri;
     Widget image = Icon(Icons.album, size: size, color: Colors.grey);
     if (uri != null) {
-      if (uri.scheme == 'file') {
-        image = Image.file(
-          File(uri.path),
-          height: size,
-          width: size,
-          fit: BoxFit.cover,
-        );
-      } else {
-        image = CachedNetworkImage(
-          imageUrl: uri.toString(),
-          height: size,
-          width: size,
-          fit: BoxFit.cover,
-        );
-      }
+      image =
+          uri.scheme == 'file'
+              ? Image.file(
+                File(uri.path),
+                height: size,
+                width: size,
+                fit: BoxFit.cover,
+              )
+              : CachedNetworkImage(
+                imageUrl: uri.toString(),
+                height: size,
+                width: size,
+                fit: BoxFit.cover,
+              );
     }
     return ClipRRect(borderRadius: BorderRadius.circular(8), child: image);
   }
@@ -1379,7 +1486,7 @@ class MiniPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
       builder: (_, snap) {
@@ -1387,8 +1494,8 @@ class MiniPlayer extends StatelessWidget {
         if (item == null) return const SizedBox.shrink();
         return GestureDetector(
           onTap: () {
-            Get.find<AppController>().showFullPlayer.value = true;
-            Get.to(() => const FullScreenPlayer());
+            _showFullPlayer.value = true;
+            Get.to(() => FullScreenPlayer());
           },
           child: Container(
             padding: const EdgeInsets.all(12),
@@ -1396,11 +1503,16 @@ class MiniPlayer extends StatelessWidget {
               borderRadius: BorderRadius.circular(26),
               color:
                   theme.brightness == Brightness.dark
-                      ? const Color.fromARGB(255, 18, 18, 18).withOpacity(0.92)
-                      : theme.cardColor.withOpacity(0.9),
+                      ? const Color.fromARGB(
+                        255,
+                        18,
+                        18,
+                        18,
+                      ).withValues(alpha: 0.92)
+                      : theme.cardColor.withValues(alpha: .9),
               boxShadow: [
                 BoxShadow(
-                  color: inactive.withOpacity(0.2),
+                  color: inactive.withValues(alpha: .2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -1466,7 +1578,7 @@ class MiniPlayer extends StatelessWidget {
                             duration: dur,
                             position: pos,
                             activeColor: theme.colorScheme.primary,
-                            inactiveColor: inactive.withOpacity(0.3),
+                            inactiveColor: inactive.withValues(alpha: .3),
                             onChangeEnd: _audioHandler.seek,
                           ),
                         ),
@@ -1479,7 +1591,7 @@ class MiniPlayer extends StatelessWidget {
                     );
                   },
                 ),
-                Controls(),
+                _Controls(),
               ],
             ),
           ),
@@ -1489,7 +1601,7 @@ class MiniPlayer extends StatelessWidget {
   }
 }
 
-// ArtistDetailScreen (stateless)
+/// Screen for artist details
 class ArtistDetailScreen extends StatelessWidget {
   final String artist;
   final List<SongInfo> songs;
@@ -1513,7 +1625,7 @@ class ArtistDetailScreen extends StatelessWidget {
   }
 }
 
-// AlbumDetailScreen (stateless)
+/// Screen for album details
 class AlbumDetailScreen extends StatelessWidget {
   final String album;
   final String artist;
@@ -1540,22 +1652,20 @@ class AlbumDetailScreen extends StatelessWidget {
   }
 }
 
-// MediaState
+/// Combined media state for stream builder
 class MediaState {
   final MediaItem? mediaItem;
   final Duration position;
-
   MediaState(this.mediaItem, this.position);
 }
 
-// SeekBar (stateless with internal state for drag)
+/// Custom seek bar widget
 class SeekBar extends StatefulWidget {
   final Duration duration;
   final Duration position;
   final ValueChanged<Duration>? onChangeEnd;
   final Color activeColor;
   final Color inactiveColor;
-
   const SeekBar({
     super.key,
     required this.duration,
@@ -1564,14 +1674,12 @@ class SeekBar extends StatefulWidget {
     required this.activeColor,
     required this.inactiveColor,
   });
-
   @override
   State<SeekBar> createState() => _SeekBarState();
 }
 
 class _SeekBarState extends State<SeekBar> {
   double? _dragValue;
-
   @override
   Widget build(BuildContext context) {
     double value = _dragValue ?? widget.position.inMilliseconds.toDouble();
@@ -1582,9 +1690,13 @@ class _SeekBarState extends State<SeekBar> {
     );
     return SliderTheme(
       data: SliderTheme.of(context).copyWith(
-        trackHeight: 4.0,
-        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
+        trackHeight: 4.0, // 🔹 Increase slider height
+        thumbShape: const RoundSliderThumbShape(
+          enabledThumbRadius: 6, // 🔹 Reduce thumb size
+        ),
+        overlayShape: const RoundSliderOverlayShape(
+          overlayRadius: 14.0, // 🔹 Reduce the ripple when dragging
+        ),
       ),
       child: Slider(
         min: 0.0,
@@ -1602,33 +1714,36 @@ class _SeekBarState extends State<SeekBar> {
   }
 }
 
-// GlobalWrapper (stateless)
-class GlobalWrapper extends StatelessWidget {
+class GlobalWrapper extends StatefulWidget {
   final Widget child;
-
   const GlobalWrapper({super.key, required this.child});
+  @override
+  State<GlobalWrapper> createState() => _GlobalWrapperState();
+}
 
+class _GlobalWrapperState extends State<GlobalWrapper> {
   @override
   Widget build(BuildContext context) {
-    final appCtrl = Get.find<AppController>();
     return Material(
       child: Stack(
         alignment: Alignment.bottomCenter,
         children: [
-          child,
-          Obx(
-            () => AnimatedSwitcher(
-              duration: 300.milliseconds,
-              child:
-                  !appCtrl.showFullPlayer.value
-                      ? SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: const MiniPlayer(),
-                        ),
-                      )
-                      : const SizedBox.shrink(),
-            ),
+          widget.child,
+          ValueListenableBuilder<bool>(
+            valueListenable: _showFullPlayer,
+            builder:
+                (_, open, __) => AnimatedSwitcher(
+                  duration: 300.milliseconds,
+                  child:
+                      !open
+                          ? SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: MiniPlayer(),
+                            ),
+                          )
+                          : const SizedBox.shrink(),
+                ),
           ),
         ],
       ),
@@ -1636,23 +1751,19 @@ class GlobalWrapper extends StatelessWidget {
   }
 }
 
-// FullScreenPlayer (stateless)
 class FullScreenPlayer extends StatelessWidget {
   const FullScreenPlayer({super.key});
 
-  void _onBack() {
+  void _onBack() async {
     Get.back();
-    Get.find<AppController>().showFullPlayer.value = false;
+    _showFullPlayer.value = false; // reactive close flag
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) _onBack();
-        return;
-      },
+      onPopInvokedWithResult: (didPop, result) => _onBack(),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: StreamBuilder<MediaItem?>(
@@ -1660,34 +1771,44 @@ class FullScreenPlayer extends StatelessWidget {
           builder: (_, snap) {
             final item = snap.data;
             if (item == null) return const SizedBox.shrink();
-            final appCtrl = Get.find<AppController>();
+
             return Stack(
               fit: StackFit.expand,
               children: [
-                Obx(
-                  () => AnimatedSwitcher(
-                    duration: 300.milliseconds,
-                    child:
-                        item.artUri != null && appCtrl.isPlayerBgImage.value
-                            ? ImageFiltered(
-                              imageFilter: ImageFilter.blur(
-                                sigmaX: 40,
-                                sigmaY: 40,
-                              ),
-                              child: MiniPlayer()._art(item, double.infinity),
-                            )
-                            : const SizedBox.shrink(),
+                /// 🪞 BLURRED BACKGROUND IMAGE
+                if (item.artUri != null)
+                  ValueListenableBuilder<bool>(
+                    valueListenable: _showBlurImagePlayerBg,
+                    builder:
+                        (_, value, __) => AnimatedSwitcher(
+                          duration: 300.milliseconds,
+                          child:
+                              value
+                                  ? ImageFiltered(
+                                    imageFilter: ImageFilter.blur(
+                                      sigmaX: 40,
+                                      sigmaY: 40,
+                                    ),
+                                    child: MiniPlayer()._art(
+                                      item,
+                                      double.infinity,
+                                    ),
+                                  )
+                                  : const SizedBox.shrink(),
+                        ),
                   ),
-                ),
                 Container(
-                  color: Theme.of(
-                    context,
-                  ).scaffoldBackgroundColor.withOpacity(0.4),
+                  color: Theme.of(context).scaffoldBackgroundColor.withValues(
+                    alpha: 0.4,
+                  ), // subtle overlay
                 ),
+
+                /// 🎧 PLAYER BODY
                 SafeArea(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      /// Top Controls
                       Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -1696,7 +1817,7 @@ class FullScreenPlayer extends StatelessWidget {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.start,
                           children: [
-                            const SizedBox(width: 28),
+                            SizedBox(width: 28),
                             IconButton(
                               icon: const Icon(
                                 Icons.keyboard_arrow_down_rounded,
@@ -1704,12 +1825,14 @@ class FullScreenPlayer extends StatelessWidget {
                               ),
                               onPressed: _onBack,
                             ),
-                            const Spacer(),
-                            const SleepTimerButton(),
+                            Spacer(),
+                            SleepTimerButton(),
                           ],
                         ),
                       ),
-                      const Expanded(child: PlayerBody()),
+
+                      /// Player content
+                      const Expanded(child: _PlayerBody()),
                     ],
                   ),
                 ),
@@ -1722,42 +1845,48 @@ class FullScreenPlayer extends StatelessWidget {
   }
 }
 
-// PlayerBody (stateless)
-class PlayerBody extends StatelessWidget {
-  const PlayerBody({super.key});
+class _PlayerBody extends StatelessWidget {
+  const _PlayerBody();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
+
     return StreamBuilder<MediaItem?>(
       stream: _audioHandler.mediaItem.stream,
       builder: (_, snap) {
         final item = snap.data;
         if (item == null) return const SizedBox.shrink();
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             children: [
               const Spacer(flex: 2),
+
+              /// 🎶 ALBUM ART WITH SHRINK ANIMATION
               StreamBuilder<PlaybackState>(
                 stream: _audioHandler.playbackState,
                 builder: (_, stateSnap) {
                   final playing = stateSnap.data?.playing ?? false;
+
                   return AnimatedScale(
                     duration: const Duration(milliseconds: 500),
                     curve: Curves.easeOut,
-                    scale: playing ? 1.0 : 0.7,
+                    scale: playing ? 1.0 : 0.7, // shrink slightly when paused
                     child: Container(
-                      width: MediaQuery.of(context).size.width * 0.75,
-                      height: MediaQuery.of(context).size.width * 0.75,
+                      width: MediaQuery.sizeOf(context).width * .75,
+                      height: MediaQuery.sizeOf(context).width * .75,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
                             blurRadius: 30,
                             spreadRadius: 4,
-                            color: theme.shadowColor.withOpacity(0.3),
+                            color: Theme.of(
+                              context,
+                            ).shadowColor.withValues(alpha: .3),
                           ),
                         ],
                       ),
@@ -1773,7 +1902,10 @@ class PlayerBody extends StatelessWidget {
                   );
                 },
               ),
+
               const Spacer(),
+
+              /// Title & Artist
               Text(
                 item.title,
                 textAlign: TextAlign.center,
@@ -1787,7 +1919,10 @@ class PlayerBody extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyLarge?.copyWith(color: inactive),
               ),
+
               const Spacer(),
+
+              /// Seekbar
               StreamBuilder<MediaState>(
                 stream: rx.Rx.combineLatest2<MediaItem?, Duration, MediaState>(
                   _audioHandler.mediaItem.stream,
@@ -1803,7 +1938,7 @@ class PlayerBody extends StatelessWidget {
                         duration: dur,
                         position: pos,
                         activeColor: theme.colorScheme.primary,
-                        inactiveColor: inactive.withOpacity(0.3),
+                        inactiveColor: inactive.withValues(alpha: .3),
                         onChangeEnd: _audioHandler.seek,
                       ),
                       Padding(
@@ -1826,8 +1961,12 @@ class PlayerBody extends StatelessWidget {
                   );
                 },
               ),
+
               const Spacer(),
-              Controls(),
+
+              /// Controls
+              _Controls(),
+
               const Spacer(flex: 2),
             ],
           ),
@@ -1837,16 +1976,12 @@ class PlayerBody extends StatelessWidget {
   }
 }
 
-// Controls (stateless)
-class Controls extends StatelessWidget {
-  const Controls({super.key});
-
+class _Controls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: .4);
     final primary = theme.colorScheme.primary;
-    final playerCtrl = Get.find<PlayerController>();
     return StreamBuilder<PlaybackState>(
       stream: _audioHandler.playbackState,
       builder: (_, snap) {
@@ -1854,17 +1989,19 @@ class Controls extends StatelessWidget {
         final playing = state?.playing ?? false;
         final queueIndex = state?.queueIndex ?? 0;
         final queueLen = _audioHandler.queue.value.length;
-        final repeat = playerCtrl.repeatMode.value;
-        final shuffle = playerCtrl.shuffleMode.value;
+        final repeat = repeatModeNotifier.value;
+        final shuffle = shuffleNotifier.value;
         final hasPrev = repeat != AudioServiceRepeatMode.one && queueIndex > 0;
         final hasNext =
             repeat != AudioServiceRepeatMode.one && queueIndex < queueLen - 1;
+
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          // mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
               icon: Icon(Icons.shuffle, color: shuffle ? primary : inactive),
-              onPressed: playerCtrl.toggleShuffle,
+              onPressed: () => _toggleShuffle(),
             ),
             IconButton(
               icon: Icon(
@@ -1892,21 +2029,42 @@ class Controls extends StatelessWidget {
                 color:
                     repeat != AudioServiceRepeatMode.none ? primary : inactive,
               ),
-              onPressed: playerCtrl.cycleRepeat,
+              onPressed: () => _cycleRepeat(),
             ),
           ],
         );
       },
     );
   }
+
+  void _toggleShuffle() {
+    final old = shuffleNotifier.value;
+    shuffleNotifier.value = !old;
+    (_audioHandler as CustomAudioHandler).toggleShuffle().catchError(
+      (_) => shuffleNotifier.value = old,
+    );
+  }
+
+  void _cycleRepeat() {
+    final old = repeatModeNotifier.value;
+    final next = switch (old) {
+      AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+      AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+      _ => AudioServiceRepeatMode.none,
+    };
+    repeatModeNotifier.value = next;
+    (_audioHandler as CustomAudioHandler)
+        .setRepeatMode(next)
+        .catchError((_) => repeatModeNotifier.value = old);
+  }
 }
 
-// DetailScaffold (stateless)
-class DetailScaffold extends StatelessWidget {
+class DetailScaffold extends StatefulWidget {
   final String title;
   final String subtitle;
   final List<SongInfo> songs;
   final Uri? artUri;
+  final bool showSubtitle;
   final bool showArtist;
 
   const DetailScaffold({
@@ -1915,20 +2073,45 @@ class DetailScaffold extends StatelessWidget {
     required this.subtitle,
     required this.songs,
     this.artUri,
+    this.showSubtitle = false,
     this.showArtist = false,
   });
 
+  @override
+  State<DetailScaffold> createState() => _DetailScaffoldState();
+}
+
+class _DetailScaffoldState extends State<DetailScaffold> {
+  String? _currentId;
+  StreamSubscription<MediaItem?>? _mediaItemSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaItemSubscription = _audioHandler.mediaItem.stream.listen((item) {
+      setState(() => _currentId = item?.id);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mediaItemSubscription?.cancel();
+    super.dispose();
+  }
+
+  bool _isCurrent(String id) => id == _currentId;
+
   void _playSongs(int index, {bool shuffle = false}) {
     final handler = _audioHandler as CustomAudioHandler;
-    if (shuffle) Get.find<PlayerController>().toggleShuffle();
-    handler.playLocalPlaylist(songs, index);
+    if (shuffle) handler.toggleShuffle();
+    handler.playLocalPlaylist(widget.songs, index);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final playerCtrl = Get.find<PlayerController>();
+
     return Scaffold(
       body: NestedScrollView(
         headerSliverBuilder:
@@ -1942,7 +2125,7 @@ class DetailScaffold extends StatelessWidget {
                 automaticallyImplyLeading: false,
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back),
-                  onPressed: Get.back,
+                  onPressed: () => Get.back(),
                 ),
                 flexibleSpace: LayoutBuilder(
                   builder: (context, constraints) {
@@ -1958,7 +2141,7 @@ class DetailScaffold extends StatelessWidget {
                       title: Opacity(
                         opacity: 1 - percent.clamp(0.0, 1.0),
                         child: Text(
-                          title,
+                          widget.title,
                           style: theme.textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: isDark ? Colors.white : Colors.black,
@@ -1968,9 +2151,9 @@ class DetailScaffold extends StatelessWidget {
                       background: Stack(
                         fit: StackFit.expand,
                         children: [
-                          artUri != null
+                          widget.artUri != null
                               ? Image.file(
-                                File(artUri!.path),
+                                File(widget.artUri!.path),
                                 fit: BoxFit.cover,
                               )
                               : const Center(
@@ -1985,11 +2168,11 @@ class DetailScaffold extends StatelessWidget {
                                     isDark
                                         ? [
                                           Colors.transparent,
-                                          Colors.black.withOpacity(0.9),
+                                          Colors.black.withValues(alpha: 0.9),
                                         ]
                                         : [
                                           Colors.transparent,
-                                          Colors.white.withOpacity(0.9),
+                                          Colors.white.withValues(alpha: 0.9),
                                         ],
                               ),
                             ),
@@ -2008,7 +2191,7 @@ class DetailScaffold extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      title,
+                                      widget.title,
                                       style: theme.textTheme.headlineSmall
                                           ?.copyWith(
                                             fontWeight: FontWeight.bold,
@@ -2018,16 +2201,16 @@ class DetailScaffold extends StatelessWidget {
                                                     : Colors.black,
                                           ),
                                     ),
-                                    if (showArtist) ...[
+                                    if (widget.showSubtitle) ...[
                                       const SizedBox(height: 6),
                                       Text(
-                                        subtitle,
+                                        widget.subtitle,
                                         style: theme.textTheme.titleMedium
                                             ?.copyWith(
                                               color: (isDark
                                                       ? Colors.white
                                                       : Colors.black)
-                                                  .withOpacity(0.8),
+                                                  .withValues(alpha: 0.8),
                                             ),
                                       ),
                                     ],
@@ -2043,76 +2226,116 @@ class DetailScaffold extends StatelessWidget {
                 ),
               ),
             ],
-        body: Obx(
-          () => ListView(
-            padding: const EdgeInsets.only(bottom: 210),
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 16,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (showArtist)
-                      Text(subtitle, style: theme.textTheme.titleLarge),
-                    Text(
-                      '${songs.length} songs',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: theme.textTheme.bodyMedium?.color?.withOpacity(
-                          0.7,
-                        ),
+        body: ListView(
+          padding: const EdgeInsets.only(bottom: 210), // Avoid Mini Player
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.showArtist)
+                    Text(widget.subtitle, style: theme.textTheme.titleLarge),
+                  Text(
+                    '${widget.songs.length} songs',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: theme.textTheme.bodyMedium?.color?.withValues(
+                        alpha: 0.7,
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: () => _playSongs(0),
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Play'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(140, 45),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _playSongs(0),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Play'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(140, 45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => _playSongs(0, shuffle: true),
-                          icon: const Icon(Icons.shuffle),
-                          label: const Text('Shuffle'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(140, 45),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _playSongs(0, shuffle: true),
+                        icon: const Icon(Icons.shuffle),
+                        label: const Text('Shuffle'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(140, 45),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const Divider(height: 1),
-              ...List.generate(songs.length, (index) {
-                final song = songs[index];
-                final songId = Uri.file(song.file.path).toString();
-                return SongTile(
-                  song: song,
-                  isCurrent: playerCtrl.currentId!.value == songId,
-                  onTap: () => _playSongs(index),
-                  trackNumber: index + 1,
-                  showDuration: true,
-                );
-              }),
-            ],
-          ),
+            ),
+            const Divider(height: 1),
+            ...List.generate(widget.songs.length, (index) {
+              final song = widget.songs[index];
+              final songId = Uri.file(song.file.path).toString();
+              return SongTile(
+                song: song,
+                isCurrent: _isCurrent(songId),
+                onTap: () => _playSongs(index),
+                trackNumber: index + 1,
+                showDuration: true,
+              );
+            }),
+          ],
         ),
       ),
     );
+  }
+}
+
+// SleepTimerController (unchanged from original)
+class SleepTimerController extends GetxController {
+  Timer? _sleepTimer;
+  Timer? _updateTimer;
+  Rx<Duration> remaining = Rx(Duration.zero);
+  RxBool isActive = RxBool(false);
+
+  void setSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _updateTimer?.cancel();
+
+    if (duration == Duration.zero) {
+      isActive.value = false;
+      remaining.value = Duration.zero;
+      return;
+    }
+
+    remaining.value = duration;
+    isActive.value = true;
+
+    _sleepTimer = Timer(duration, () {
+      isActive.value = false;
+      remaining.value = Duration.zero;
+      // TODO: Implement what happens when timer ends, e.g., pause music
+      // Get.find<MusicController>().pause();
+    });
+
+    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      remaining.value -= const Duration(seconds: 1);
+      if (remaining.value <= Duration.zero) {
+        timer.cancel();
+        remaining.value = Duration.zero;
+        (_audioHandler as CustomAudioHandler).stop();
+      }
+    });
+  }
+
+  @override
+  void onClose() {
+    _sleepTimer?.cancel();
+    _updateTimer?.cancel();
+    super.onClose();
   }
 }
 
@@ -2331,27 +2554,6 @@ class SleepTimerButton extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-// MyApp (stateless)
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final appCtrl = Get.find<AppController>();
-    return Obx(
-      () => GetMaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Rhythm Player',
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: appCtrl.themeMode.value,
-        home: const MainScreen(),
-        builder: (context, child) => GlobalWrapper(child: child!),
-      ),
     );
   }
 }
