@@ -290,6 +290,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // Static list of online demo songs
   static final List<MediaItem> _onlineItems = [
     MediaItem(
+      id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
+      album: "Science Friday",
+      title: "A Salute To Head-Scratching Science (Online)",
+      artist: "Science Friday and WNYC Studios",
+      duration: const Duration(milliseconds: 5739820),
+      artUri: Uri.parse(
+        'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
+      ),
+    ),
+    MediaItem(
       id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3 ',
       title: 'A Good Bass for Gambling',
       artist: 'Kevin MacLeod',
@@ -1869,8 +1879,8 @@ class FullScreenPlayer extends StatelessWidget {
   const FullScreenPlayer({super.key});
 
   void _onBack() {
-    Get.back();
     _showFullPlayer.value = false; // reactive close flag
+    Get.back();
   }
 
   @override
@@ -1901,12 +1911,10 @@ class FullScreenPlayer extends StatelessWidget {
                               value
                                   ? ImageFiltered(
                                     imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                                    child: Image.file(
-                                      height: double.infinity,
-                                      width: double.infinity,
-                                      File(item.artUri!.toFilePath()),
-                                      fit: BoxFit.cover,
-                                    ),
+                                    child: MiniPlayer()._art(
+                                      item,
+                                      double.infinity,
+                                    )
                                   )
                                   : const SizedBox.shrink(),
                         ),
