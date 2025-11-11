@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:rhythm/custom_audio_handler/custom_audio_handler_with_metadata.dart';
+import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 
 class LocalMusicScanner {
   static const Set<String> _supportedFormats = {
