@@ -11,14 +11,14 @@ import 'package:rhythm/main.dart';
 import 'package:rhythm/src/app_config/app_utils.dart';
 import 'package:rhythm/src/controllers/library_controller.dart';
 import 'package:rhythm/src/controllers/player_controller.dart';
-import 'package:rhythm/src/controllers/search_controller.dart' as con;
+import 'package:rhythm/src/controllers/search_controller.dart';
 import 'package:rhythm/src/view/album_details.dart';
 import 'package:rhythm/src/view/artist_details_screen.dart';
 import 'package:rhythm/src/view/folder_details.dart';
 import 'package:rhythm/src/widgets/online_tile.dart';
 import 'package:rhythm/src/widgets/song_tile.dart';
 
-class SearchScreen extends GetView<con.SearchController> {
+class SearchScreen extends GetView<AppSearchController> {
   SearchScreen({super.key});
 
   final LibraryController libCtrl = Get.find<LibraryController>();

@@ -14,7 +14,7 @@ import 'package:rhythm/src/view/album_details.dart';
 import 'package:rhythm/src/view/app_drawer.dart';
 import 'package:rhythm/src/view/artist_details_screen.dart';
 import 'package:rhythm/src/view/folder_details.dart';
-import 'package:rhythm/src/view/search_controller.dart';
+import 'package:rhythm/src/view/search_screen.dart';
 import 'package:rhythm/src/widgets/online_tile.dart';
 import 'package:rhythm/src/widgets/song_tile.dart';
 

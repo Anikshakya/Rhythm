@@ -9,6 +9,7 @@ import 'package:rhythm/src/app_config/app_theme.dart';
 import 'package:rhythm/src/controllers/app_controller.dart';
 import 'package:rhythm/src/controllers/library_controller.dart';
 import 'package:rhythm/src/controllers/player_controller.dart';
+import 'package:rhythm/src/controllers/search_controller.dart';
 import 'package:rhythm/src/controllers/sleep_timer_controller.dart';
 import 'package:rhythm/src/player/miniplayer.dart';
 import 'package:rhythm/src/view/main_screen.dart';
@@ -34,6 +35,7 @@ Future<void> main() async {
   Get.put(LibraryController());
   Get.put(SleepTimerController());
   Get.put(SearchController());
+  Get.put(AppSearchController());
 
   final libCtrl = Get.find<LibraryController>();
   final playerCtrl = Get.find<PlayerController>();
