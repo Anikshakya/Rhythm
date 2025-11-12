@@ -48,7 +48,21 @@ class MainScreen extends GetView<LibraryController> {
 
   Widget _buildSongsTab() {
     if (controller.musicFiles.isEmpty) {
-      return const Center(child: Text('No local songs found.'));
+      return Center(
+        child: FilledButton.tonalIcon(
+          onPressed: () async {
+            await controller.startScan();
+          },
+          icon: const Icon(Icons.shuffle),
+          label: const Text('Scan Songs'),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(140, 45),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+      );
     }
     return ListView.builder(
       itemCount: controller.musicFiles.length,
