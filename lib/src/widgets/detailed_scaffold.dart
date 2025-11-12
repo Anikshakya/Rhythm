@@ -203,7 +203,7 @@ class DetailScaffold extends StatelessWidget {
                 final songId = Uri.file(song.file.path).toString();
                 return SongTile(
                   song: song,
-                  isCurrent: playerCtrl.currentId!.value == songId,
+                  isCurrent: playerCtrl.currentId.value == songId,
                   onTap: () => _playSongs(index),
                   trackNumber: index + 1,
                   showDuration: true,
