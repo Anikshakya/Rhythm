@@ -72,7 +72,7 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 
     // 4. Update mediaItem when the current index changes (for playlists)
     _player.sequenceStateStream.listen((state) {
-      final index = state!.currentIndex ?? 0;
+      final index = state!.currentIndex;
       final currentQueue = queue.value;
       if (index < currentQueue.length) {
         mediaItem.add(currentQueue[index]);

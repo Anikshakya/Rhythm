@@ -47,7 +47,7 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
     _player.sequenceStateStream.listen((state) {
       if (_isSettingSource)
         return; // Ignore updates during source setting to prevent glitches
-      final index = state!.currentIndex ?? 0;
+      final index = state!.currentIndex;
       final currentQueue = queue.value;
       if (index < currentQueue.length) {
         mediaItem.add(currentQueue[index]);
