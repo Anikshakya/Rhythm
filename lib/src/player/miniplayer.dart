@@ -48,7 +48,7 @@ class MiniPlayer extends StatelessWidget {
         return GestureDetector(
           onTap: () {
             Get.find<AppController>().showFullPlayer.value = true;
-            Get.to(() => const FullScreenPlayer());
+            Get.to(() => const FullScreenPlayer(), transition: Transition.downToUp);
           },
           child: Container(
             padding: const EdgeInsets.all(12),
