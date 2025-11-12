@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:rhythm/main.dart';
@@ -11,6 +8,7 @@ import 'package:rhythm/src/controllers/app_controller.dart';
 import 'package:rhythm/src/player/controls.dart';
 import 'package:rhythm/src/player/full_screen_player.dart';
 import 'package:rhythm/src/player/seek_bar.dart';
+import 'package:rhythm/src/widgets/custom_image.dart';
 
 import 'package:rxdart/rxdart.dart' as rx;
 
@@ -28,21 +26,12 @@ class MiniPlayer extends StatelessWidget {
     final uri = item.artUri;
     Widget image = Icon(Icons.album, size: size, color: Colors.grey);
     if (uri != null) {
-      if (uri.scheme == 'file') {
-        image = Image.file(
-          File(uri.path),
-          height: size,
-          width: size,
-          fit: BoxFit.cover,
-        );
-      } else {
-        image = CachedNetworkImage(
-          imageUrl: uri.toString(),
-          height: size,
-          width: size,
-          fit: BoxFit.cover,
-        );
-      }
+      image = CustomImage(
+        uri: uri.toString(),
+        height: size,
+        width: size,
+        fit: BoxFit.cover,
+      );
     }
     return ClipRRect(borderRadius: BorderRadius.circular(8), child: image);
   }
@@ -50,7 +39,7 @@ class MiniPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
     return StreamBuilder<MediaItem?>(
       stream: audioHandler.mediaItem.stream,
       builder: (_, snap) {
@@ -67,11 +56,11 @@ class MiniPlayer extends StatelessWidget {
               borderRadius: BorderRadius.circular(26),
               color:
                   theme.brightness == Brightness.dark
-                      ? const Color.fromARGB(255, 18, 18, 18).withOpacity(0.92)
-                      : theme.cardColor.withOpacity(0.9),
+                      ? const Color.fromARGB(255, 18, 18, 18).withValues(alpha: 0.92)
+                      : theme.cardColor.withValues(alpha: 0.9),
               boxShadow: [
                 BoxShadow(
-                  color: inactive.withOpacity(0.2),
+                  color: inactive.withValues(alpha: 0.2),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -137,7 +126,7 @@ class MiniPlayer extends StatelessWidget {
                             duration: dur,
                             position: pos,
                             activeColor: theme.colorScheme.primary,
-                            inactiveColor: inactive.withOpacity(0.3),
+                            inactiveColor: inactive.withValues(alpha: 0.3),
                             onChangeEnd: audioHandler.seek,
                           ),
                         ),

@@ -58,7 +58,7 @@ class FullScreenPlayer extends StatelessWidget {
                 Container(
                   color: Theme.of(
                     context,
-                  ).scaffoldBackgroundColor.withOpacity(0.4),
+                  ).scaffoldBackgroundColor.withValues(alpha: 0.4),
                 ),
                 SafeArea(
                   child: Column(
@@ -107,7 +107,7 @@ class PlayerBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
     return StreamBuilder<MediaItem?>(
       stream: audioHandler.mediaItem.stream,
       builder: (_, snap) {
@@ -135,7 +135,7 @@ class PlayerBody extends StatelessWidget {
                           BoxShadow(
                             blurRadius: 30,
                             spreadRadius: 4,
-                            color: theme.shadowColor.withOpacity(0.3),
+                            color: theme.shadowColor.withValues(alpha: 0.3),
                           ),
                         ],
                       ),
@@ -181,7 +181,7 @@ class PlayerBody extends StatelessWidget {
                         duration: dur,
                         position: pos,
                         activeColor: theme.colorScheme.primary,
-                        inactiveColor: inactive.withOpacity(0.3),
+                        inactiveColor: inactive.withValues(alpha: 0.3),
                         onChangeEnd: audioHandler.seek,
                       ),
                       Padding(

@@ -1,9 +1,7 @@
 // Reusable OnlineTile (stateless)
-import 'dart:io';
-
 import 'package:audio_service/audio_service.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:rhythm/src/widgets/custom_image.dart';
 
 class OnlineTile extends StatelessWidget {
   final MediaItem item;
@@ -61,26 +59,7 @@ class OnlineTile extends StatelessWidget {
   }
 
   Widget _buildArt() {
-    if (item.artUri != null) {
       final uri = item.artUri!;
-      if (uri.scheme == 'file') {
-        return Image.file(
-          File(uri.path),
-          fit: BoxFit.cover,
-          errorBuilder:
-              (context, error, stackTrace) =>
-                  const Icon(Icons.cloud_queue_outlined),
-        );
-      } else {
-        return CachedNetworkImage(
-          imageUrl: uri.toString(),
-          fit: BoxFit.cover,
-          errorWidget:
-              (context, url, error) => const Icon(Icons.cloud_queue_outlined),
-        );
-      }
-    } else {
-      return const Icon(Icons.cloud_queue_outlined);
-    }
+      return CustomImage(uri: uri.toString(), fit: BoxFit.cover);
   }
 }

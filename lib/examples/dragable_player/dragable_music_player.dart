@@ -546,7 +546,7 @@ class MyApp extends StatelessWidget {
             cupertinoOverrideTheme: CupertinoThemeData(
               primaryColor: color,
               scaffoldBackgroundColor: CupertinoColors.systemBackground,
-              barBackgroundColor: CupertinoColors.systemBackground.withOpacity(
+              barBackgroundColor: CupertinoColors.systemBackground.withValues(alpha: 
                 0.8,
               ),
               textTheme: CupertinoTextThemeData(
@@ -578,7 +578,7 @@ class MyApp extends StatelessWidget {
                   .resolveFrom(context),
               barBackgroundColor: CupertinoColors.systemBackground
                   .resolveFrom(context)
-                  .withOpacity(0.8),
+                  .withValues(alpha: 0.8),
               textTheme: CupertinoTextThemeData(
                 navTitleTextStyle: TextStyle(
                   fontSize: 17,
@@ -673,7 +673,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       Theme.of(context).colorScheme.onSurfaceVariant,
                   backgroundColor: Theme.of(
                     context,
-                  ).colorScheme.primary.withOpacity(0.08),
+                  ).colorScheme.primary.withValues(alpha: 0.08),
                   items: const [
                     BottomNavigationBarItem(
                       icon: Icon(CupertinoIcons.house_fill),
@@ -1311,7 +1311,7 @@ class PlayerUI extends StatelessWidget {
         lerpDouble(screenHeight * 0.3, screenHeight * 0.94, percentage)!;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary.withOpacity(bgColor),
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: bgColor),
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(bgTopRadius),
           topRight: Radius.circular(bgTopRadius),
@@ -1652,7 +1652,7 @@ class PlayerUI extends StatelessWidget {
                             borderRadius: BorderRadius.circular(12),
                             color: Theme.of(
                               context,
-                            ).colorScheme.primary.withOpacity(0.1),
+                            ).colorScheme.primary.withValues(alpha: 0.1),
                             onPressed: () => showSleepTimerDialog(context),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,

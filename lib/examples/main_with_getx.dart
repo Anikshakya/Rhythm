@@ -1375,7 +1375,7 @@
 //   @override
 //   Widget build(BuildContext context) {
 //     final theme = Theme.of(context);
-//     final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+//     final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
 //     return StreamBuilder<MediaItem?>(
 //       stream: _audioHandler.mediaItem.stream,
 //       builder: (_, snap) {
@@ -1392,11 +1392,11 @@
 //               borderRadius: BorderRadius.circular(26),
 //               color:
 //                   theme.brightness == Brightness.dark
-//                       ? const Color.fromARGB(255, 18, 18, 18).withOpacity(0.92)
-//                       : theme.cardColor.withOpacity(0.9),
+//                       ? const Color.fromARGB(255, 18, 18, 18).withValues(alpha: 0.92)
+//                       : theme.cardColor.withValues(alpha: 0.9),
 //               boxShadow: [
 //                 BoxShadow(
-//                   color: inactive.withOpacity(0.2),
+//                   color: inactive.withValues(alpha: 0.2),
 //                   blurRadius: 10,
 //                   spreadRadius: 2,
 //                 ),
@@ -1462,7 +1462,7 @@
 //                             duration: dur,
 //                             position: pos,
 //                             activeColor: theme.colorScheme.primary,
-//                             inactiveColor: inactive.withOpacity(0.3),
+//                             inactiveColor: inactive.withValues(alpha: 0.3),
 //                             onChangeEnd: _audioHandler.seek,
 //                           ),
 //                         ),
@@ -1678,7 +1678,7 @@
 //                 Container(
 //                   color: Theme.of(
 //                     context,
-//                   ).scaffoldBackgroundColor.withOpacity(0.4),
+//                   ).scaffoldBackgroundColor.withValues(alpha: 0.4),
 //                 ),
 //                 SafeArea(
 //                   child: Column(
@@ -1725,7 +1725,7 @@
 //   @override
 //   Widget build(BuildContext context) {
 //     final theme = Theme.of(context);
-//     final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+//     final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
 //     return StreamBuilder<MediaItem?>(
 //       stream: _audioHandler.mediaItem.stream,
 //       builder: (_, snap) {
@@ -1753,7 +1753,7 @@
 //                           BoxShadow(
 //                             blurRadius: 30,
 //                             spreadRadius: 4,
-//                             color: theme.shadowColor.withOpacity(0.3),
+//                             color: theme.shadowColor.withValues(alpha: 0.3),
 //                           ),
 //                         ],
 //                       ),
@@ -1799,7 +1799,7 @@
 //                         duration: dur,
 //                         position: pos,
 //                         activeColor: theme.colorScheme.primary,
-//                         inactiveColor: inactive.withOpacity(0.3),
+//                         inactiveColor: inactive.withValues(alpha: 0.3),
 //                         onChangeEnd: _audioHandler.seek,
 //                       ),
 //                       Padding(
@@ -1840,7 +1840,7 @@
 //   @override
 //   Widget build(BuildContext context) {
 //     final theme = Theme.of(context);
-//     final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+//     final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
 //     final primary = theme.colorScheme.primary;
 //     final playerCtrl = Get.find<PlayerController>();
 //     return StreamBuilder<PlaybackState>(
@@ -1981,11 +1981,11 @@
 //                                     isDark
 //                                         ? [
 //                                           Colors.transparent,
-//                                           Colors.black.withOpacity(0.9),
+//                                           Colors.black.withValues(alpha: 0.9),
 //                                         ]
 //                                         : [
 //                                           Colors.transparent,
-//                                           Colors.white.withOpacity(0.9),
+//                                           Colors.white.withValues(alpha: 0.9),
 //                                         ],
 //                               ),
 //                             ),
@@ -2023,7 +2023,7 @@
 //                                               color: (isDark
 //                                                       ? Colors.white
 //                                                       : Colors.black)
-//                                                   .withOpacity(0.8),
+//                                                   .withValues(alpha: 0.8),
 //                                             ),
 //                                       ),
 //                                     ],
@@ -2056,7 +2056,7 @@
 //                     Text(
 //                       '${songs.length} songs',
 //                       style: theme.textTheme.titleMedium?.copyWith(
-//                         color: theme.textTheme.bodyMedium?.color?.withOpacity(
+//                         color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 
 //                           0.7,
 //                         ),
 //                       ),
@@ -2148,7 +2148,7 @@
 //                         borderRadius: BorderRadius.circular(12),
 //                         color: Theme.of(
 //                           context,
-//                         ).colorScheme.primary.withOpacity(0.1),
+//                         ).colorScheme.primary.withValues(alpha: 0.1),
 //                       ),
 //                       child: Row(
 //                         mainAxisSize: MainAxisSize.min,

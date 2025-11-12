@@ -1,9 +1,8 @@
 // Reusable SongTile (stateless)
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 import 'package:rhythm/src/app_config/app_utils.dart';
+import 'package:rhythm/src/widgets/custom_image.dart';
 
 class SongTile extends StatelessWidget {
   final SongInfo song;
@@ -83,12 +82,9 @@ class SongTile extends StatelessWidget {
 
   Widget _buildArt() {
     if (song.meta.artUri != null) {
-      return Image.file(
-        File(song.meta.artUri!.path),
+      return CustomImage(
+        uri: song.meta.artUri.toString(),
         fit: BoxFit.cover,
-        errorBuilder:
-            (context, error, stackTrace) =>
-                const Icon(Icons.music_note_outlined),
       );
     } else if (song.meta.albumArt != null) {
       return Image.memory(

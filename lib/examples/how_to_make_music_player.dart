@@ -709,13 +709,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 return Container(
                   padding: const EdgeInsets.all(12.0),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.85), // Dark background
+                    color: Colors.black.withValues(alpha: 0.85), // Dark background
                     borderRadius: BorderRadius.circular(
                       16.0,
                     ), // Rounded corners
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.3),
+                        color: Colors.black.withValues(alpha: 0.3),
                         blurRadius: 10,
                         spreadRadius: 2,
                       ),
@@ -762,7 +762,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 Text(
                                   mediaItem?.artist ?? 'Unknown Artist',
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
+                                    color: Colors.white.withValues(alpha: 0.7),
                                     fontSize: 14,
                                   ),
                                   maxLines: 1,
@@ -776,7 +776,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           Icon(
                             Icons
                                 .bar_chart_sharp, // Represents the vertical lines icon approximation
-                            color: Colors.white.withOpacity(0.7),
+                            color: Colors.white.withValues(alpha: 0.7),
                             size: 20,
                           ),
                         ],
@@ -806,7 +806,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                       position,
                                     ).toString(), // Format: 0:05
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
+                                      color: Colors.white.withValues(alpha: 0.7),
                                       fontSize: 12,
                                     ),
                                   ),
@@ -827,7 +827,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                   Text(
                                     _formatDuration(duration).toString(),
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
+                                      color: Colors.white.withValues(alpha: 0.7),
                                       fontSize: 12,
                                     ),
                                   ),
@@ -878,7 +878,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                         hasPrevious
                                             ? _audioHandler.skipToPrevious
                                             : null, // Disable if no previous track
-                                    disabledColor: Colors.white.withOpacity(
+                                    disabledColor: Colors.white.withValues(alpha: 
                                       0.4,
                                     ),
                                   );
@@ -916,7 +916,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                         hasNext
                                             ? _audioHandler.skipToNext
                                             : null, // Disable if no next track
-                                    disabledColor: Colors.white.withOpacity(
+                                    disabledColor: Colors.white.withValues(alpha: 
                                       0.4,
                                     ),
                                   );

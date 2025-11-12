@@ -1,11 +1,10 @@
 // DetailScaffold (stateless)
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 import 'package:rhythm/main.dart';
 import 'package:rhythm/src/controllers/player_controller.dart';
+import 'package:rhythm/src/widgets/custom_image.dart';
 import 'package:rhythm/src/widgets/song_tile.dart';
 
 class DetailScaffold extends StatelessWidget {
@@ -74,14 +73,10 @@ class DetailScaffold extends StatelessWidget {
                       background: Stack(
                         fit: StackFit.expand,
                         children: [
-                          artUri != null
-                              ? Image.file(
-                                File(artUri!.path),
-                                fit: BoxFit.cover,
-                              )
-                              : const Center(
-                                child: Icon(Icons.album, size: 100),
-                              ),
+                          CustomImage(
+                            uri: artUri.toString(),
+                            fit: BoxFit.cover,
+                          ),
                           Container(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -91,11 +86,11 @@ class DetailScaffold extends StatelessWidget {
                                     isDark
                                         ? [
                                           Colors.transparent,
-                                          Colors.black.withOpacity(0.9),
+                                          Colors.black.withValues(alpha: 0.9),
                                         ]
                                         : [
                                           Colors.transparent,
-                                          Colors.white.withOpacity(0.9),
+                                          Colors.white.withValues(alpha: 0.9),
                                         ],
                               ),
                             ),
@@ -133,7 +128,7 @@ class DetailScaffold extends StatelessWidget {
                                               color: (isDark
                                                       ? Colors.white
                                                       : Colors.black)
-                                                  .withOpacity(0.8),
+                                                  .withValues(alpha: 0.8),
                                             ),
                                       ),
                                     ],
@@ -166,7 +161,7 @@ class DetailScaffold extends StatelessWidget {
                     Text(
                       '${songs.length} songs',
                       style: theme.textTheme.titleMedium?.copyWith(
-                        color: theme.textTheme.bodyMedium?.color?.withOpacity(
+                        color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 
                           0.7,
                         ),
                       ),

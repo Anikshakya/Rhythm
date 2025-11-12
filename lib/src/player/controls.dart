@@ -11,7 +11,7 @@ class Controls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final inactive = theme.colorScheme.onSurface.withOpacity(0.4);
+    final inactive = theme.colorScheme.onSurface.withValues(alpha: 0.4);
     final primary = theme.colorScheme.primary;
     final playerCtrl = Get.find<PlayerController>();
     return StreamBuilder<PlaybackState>(
