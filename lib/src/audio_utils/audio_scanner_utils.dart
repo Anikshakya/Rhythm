@@ -15,17 +15,41 @@ class LocalMusicScanner {
   int _scannedFiles = 0;
 
   Future<bool> requestPermission() async {
+     await Permission.notification.request();
+     await Permission.storage.request();
+     await Permission.audio.request();
+
+    // Request Storage Permission
     var status = await Permission.storage.status;
     if (!status.isGranted) {
       status = await Permission.storage.request();
     }
+
+    // For Android 11+ (API 30+): Manage External Storage
     if (Platform.isAndroid && await _getAndroidVersion() >= 30) {
       final manage = await Permission.manageExternalStorage.status;
-      if (!manage.isGranted) await Permission.manageExternalStorage.request();
+      if (!manage.isGranted) {
+        await Permission.manageExternalStorage.request();
+      }
       status = await Permission.manageExternalStorage.status;
     }
-    return status.isGranted;
+
+    // 🎵 Request Audio / Media Library Permission
+    var audioStatus = await Permission.audio.status;
+    if (!audioStatus.isGranted) {
+      audioStatus = await Permission.audio.request();
+    }
+
+    // 🔔 Request Notification Permission (Android 13+ / iOS 10+)
+    var notifStatus = await Permission.notification.status;
+    if (!notifStatus.isGranted) {
+      notifStatus = await Permission.notification.request();
+    }
+
+    // Return true only if all essential permissions are granted
+    return status.isGranted && audioStatus.isGranted && notifStatus.isGranted;
   }
+
 
   Future<int> _getAndroidVersion() async {
     return Platform.isAndroid ? 30 : 0;
