@@ -30,7 +30,6 @@ class FullScreenPlayer extends StatelessWidget {
         return;
       },
       child: Scaffold(
-        backgroundColor: Colors.transparent,
         body: StreamBuilder<MediaItem?>(
           stream: audioHandler.mediaItem.stream,
           builder: (_, snap) {

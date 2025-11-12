@@ -9,6 +9,7 @@ import 'package:path/path.dart' as path;
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 import 'package:rhythm/main.dart';
 import 'package:rhythm/src/app_config/app_utils.dart';
+import 'package:rhythm/src/constant/constants.dart';
 import 'package:rhythm/src/controllers/library_controller.dart';
 import 'package:rhythm/src/controllers/player_controller.dart';
 import 'package:rhythm/src/controllers/search_controller.dart';
@@ -63,7 +64,7 @@ class SearchScreen extends GetView<AppSearchController> {
           return Obx(
             () => SongTile(
               song: song,
-              isCurrent: playerCtrl.currentId!.value == songId,
+              isCurrent: playerCtrl.currentId.value == songId,
               onTap: () => _playLocalSongs(filteredSongs, index),
             ),
           );
@@ -75,133 +76,9 @@ class SearchScreen extends GetView<AppSearchController> {
 
 
   Widget _buildOnlineTab() {
-    // Static online items
-    final List<MediaItem> onlineItems = [
-      MediaItem(
-        id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
-        album: "Science Friday",
-        title: "A Salute To Head-Scratching Science (Online)",
-        artist: "Science Friday and WNYC Studios",
-        duration: const Duration(milliseconds: 5739820),
-        artUri: Uri.parse(
-          'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/pride_and_prejudice_0801_librivox/prideandprejudice_01_austen.mp3',
-        album: 'Pride and Prejudice',
-        title: 'Chapter 1 - Pride and Prejudice',
-        artist: 'Jane Austen',
-        duration: const Duration(minutes: 20),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/PrideAndPrejudiceTitlePage.jpg/640px-PrideAndPrejudiceTitlePage.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/dracula_librivox/dracula_01_stoker.mp3',
-        album: 'Dracula',
-        title: 'Chapter 1 - Dracula',
-        artist: 'Bram Stoker',
-        duration: const Duration(minutes: 28),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/7/7a/Dracula_1st_ed_cover_reproduction.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/frankenstein_1818_librivox/frankenstein_01_shelley_64kb.mp3',
-        album: 'Frankenstein',
-        title: 'Letter 1 - Frankenstein',
-        artist: 'Mary Shelley',
-        duration: const Duration(minutes: 25),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/3/35/Frankenstein_1818_edition_title_page.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/adventures_of_sherlock_holmes_0811_librivox/adventures_sherlockholmes_01_doyle_64kb.mp3',
-        album: 'The Adventures of Sherlock Holmes',
-        title: 'A Scandal in Bohemia',
-        artist: 'Arthur Conan Doyle',
-        duration: const Duration(minutes: 33),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/6/6b/Adventures_of_Sherlock_Holmes.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/mobydick_0811_librivox/mobydick_001_melville_64kb.mp3',
-        album: 'Moby Dick',
-        title: 'Chapter 1 - Loomings',
-        artist: 'Herman Melville',
-        duration: const Duration(minutes: 23),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/4/41/Moby-Dick_FE_title_page.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/les_miserables_vol1_1201_librivox/lesmiserables_vol1_01_hugo_64kb.mp3',
-        album: 'Les Misérables (Vol 1)',
-        title: 'Book 1 - Chapter 1',
-        artist: 'Victor Hugo',
-        duration: const Duration(minutes: 27),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/0/0b/Les_Mis%C3%A9rables_1862.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/warandpeace_01_tolstoy_64kb/warandpeace_01_tolstoy_64kb.mp3',
-        album: 'War and Peace',
-        title: 'Book 1 - Chapter 1',
-        artist: 'Leo Tolstoy',
-        duration: const Duration(minutes: 31),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/0/0b/War-and-peace-first-edition.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/great_expectations_0711_librivox/greatexpectations_001_dickens_64kb.mp3',
-        album: 'Great Expectations',
-        title: 'Chapter 1',
-        artist: 'Charles Dickens',
-        duration: const Duration(minutes: 21),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/1/1e/Great_Expectations_title_page.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/alice_wonderland_1002_librivox/aliceinwonderland_01_carroll_64kb.mp3',
-        album: 'Alice in Wonderland',
-        title: 'Down the Rabbit Hole',
-        artist: 'Lewis Carroll',
-        duration: const Duration(minutes: 17),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/6/6b/Alice_in_Wonderland_cover_1865.jpg',
-        ),
-      ),
-      MediaItem(
-        id:
-            'https://www.archive.org/download/time_machine_librivox/time_machine_01_wells_64kb.mp3',
-        album: 'The Time Machine',
-        title: 'Chapter 1 - The Time Traveller',
-        artist: 'H. G. Wells',
-        duration: const Duration(minutes: 24),
-        artUri: Uri.parse(
-          'https://upload.wikimedia.org/wikipedia/commons/3/35/The_Time_Machine_%281895%29.djvu',
-        ),
-      ),
-    ];
-
     return Obx(() {
       final filteredItems =
-          onlineItems.where((item) {
+          AppConstant().onlineItems.where((item) {
             final lowerTitle = item.title.toLowerCase();
             final lowerArtist = (item.artist ?? '').toLowerCase();
             final lowerAlbum = (item.album ?? '').toLowerCase();
@@ -219,7 +96,7 @@ class SearchScreen extends GetView<AppSearchController> {
           final item = filteredItems[index];
           return OnlineTile(
             item: item,
-            isCurrent: Get.find<PlayerController>().currentId!.value == item.id,
+            isCurrent: Get.find<PlayerController>().currentId.value == item.id,
             onTap: () => _playOnlineSongs(filteredItems, index),
           );
         },

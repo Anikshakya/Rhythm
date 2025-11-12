@@ -57,7 +57,7 @@ class FolderDetailScreen extends StatelessWidget {
                 return Obx(
                   () => SongTile(
                     song: song,
-                    isCurrent: playerCtrl.currentId!.value == songId,
+                    isCurrent: playerCtrl.currentId.value == songId,
                     onTap: () => _playSongs(index),
                   ),
                 );

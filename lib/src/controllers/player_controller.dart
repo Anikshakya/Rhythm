@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:audio_service/audio_service.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
@@ -11,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class PlayerController extends GetxController {
   Rx<AudioServiceRepeatMode> repeatMode = AudioServiceRepeatMode.none.obs;
   RxBool shuffleMode = false.obs;
-  RxString? currentId = RxString("");
+  RxString currentId = "".obs;
 
   StreamSubscription<PlaybackState>? _playbackSubscription;
   StreamSubscription<MediaItem?>? _mediaItemSubscription;
@@ -20,17 +19,22 @@ class PlayerController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+
     _playbackSubscription = audioHandler.playbackState.stream.listen((state) {
       repeatMode.value = state.repeatMode;
       shuffleMode.value = state.shuffleMode == AudioServiceShuffleMode.all;
     });
+
     _mediaItemSubscription = audioHandler.mediaItem.stream.listen((item) {
-      currentId!.value = item!.id;
-      _saveCurrentState();
+      if (item != null) {
+        currentId.value = item.id;
+        _saveCurrentState();
+      }
     });
-    _queueSubscription = audioHandler.queue.stream.listen(
-      (_) => _saveCurrentState(),
-    );
+
+    _queueSubscription = audioHandler.queue.stream.listen((queue) {
+      if (queue.isNotEmpty) _saveCurrentState();
+    });
   }
 
   @override
@@ -67,63 +71,75 @@ class PlayerController extends GetxController {
   }
 
   Future<void> _saveCurrentState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentQueue = audioHandler.queue.value;
-    if (currentQueue.isEmpty) return;
-    final queueList =
-        currentQueue
-            .map(
-              (item) => {
-                'id': item.id,
-                'title': item.title,
-                'artist': item.artist,
-                'album': item.album,
-                'duration': item.duration?.inMilliseconds,
-                'artUri': item.artUri?.toString(),
-              },
-            )
-            .toList();
-    await prefs.setString('last_queue', json.encode(queueList));
-    await prefs.setInt(
-      'last_index',
-      audioHandler.playbackState.value.queueIndex ?? 0,
-    );
-    await prefs.setInt('last_position', 0); // Reset position for next launch
+    try {
+      final currentQueue = audioHandler.queue.value;
+      if (currentQueue.isEmpty) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final queueList =
+          currentQueue.map((item) {
+            return {
+              'id': item.id,
+              'title': item.title,
+              'artist': item.artist,
+              'album': item.album,
+              'duration': item.duration?.inMilliseconds,
+              'artUri': item.artUri?.toString(),
+            };
+          }).toList();
+
+      await prefs.setString('last_queue', json.encode(queueList));
+      await prefs.setInt(
+        'last_index',
+        audioHandler.playbackState.value.queueIndex ?? 0,
+      );
+      await prefs.setInt('last_position', 0);
+    } catch (e) {
+      // Prevent crash if handler or prefs not ready
+      print('Error saving current state: $e');
+    }
   }
 
   Future<void> loadLastState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastQueueJson = prefs.getString('last_queue');
-    if (lastQueueJson == null) return;
-    final lastQueueList = json.decode(lastQueueJson) as List<dynamic>;
-    final items = <MediaItem>[];
-    final sources = <AudioSource>[];
-    for (final map in lastQueueList) {
-      final id = map['id'] as String;
-      final item = MediaItem(
-        id: id,
-        title: map['title'] as String? ?? 'Unknown Title',
-        artist: map['artist'] as String?,
-        album: map['album'] as String?,
-        duration: Duration(milliseconds: map['duration'] as int? ?? 0),
-        artUri:
-            map['artUri'] != null ? Uri.parse(map['artUri'] as String) : null,
-      );
-      items.add(item);
-      sources.add(AudioSource.uri(Uri.parse(id), tag: item));
-    }
-    if (items.isNotEmpty) {
-      final lastIndex = prefs.getInt('last_index') ?? 0;
-      final lastPosition = Duration(
-        milliseconds: prefs.getInt('last_position') ?? 0,
-      );
-      await (audioHandler as CustomAudioHandler).loadPlaylist(
-        items,
-        sources,
-        initialIndex: lastIndex,
-      );
-      await audioHandler.pause();
-      await audioHandler.seek(lastPosition);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastQueueJson = prefs.getString('last_queue');
+      if (lastQueueJson == null) return;
+
+      final lastQueueList = json.decode(lastQueueJson) as List<dynamic>;
+      final items = <MediaItem>[];
+      final sources = <AudioSource>[];
+
+      for (final map in lastQueueList) {
+        final id = map['id'] as String;
+        final item = MediaItem(
+          id: id,
+          title: map['title'] as String? ?? 'Unknown Title',
+          artist: map['artist'] as String?,
+          album: map['album'] as String?,
+          duration: Duration(milliseconds: map['duration'] as int? ?? 0),
+          artUri:
+              map['artUri'] != null ? Uri.parse(map['artUri'] as String) : null,
+        );
+        items.add(item);
+        sources.add(AudioSource.uri(Uri.parse(id), tag: item));
+      }
+
+      if (items.isNotEmpty) {
+        final lastIndex = prefs.getInt('last_index') ?? 0;
+        final lastPosition = Duration(
+          milliseconds: prefs.getInt('last_position') ?? 0,
+        );
+        await (audioHandler as CustomAudioHandler).loadPlaylist(
+          items,
+          sources,
+          initialIndex: lastIndex,
+        );
+        await audioHandler.pause();
+        await audioHandler.seek(lastPosition);
+      }
+    } catch (e) {
+      print('Error loading last state: $e');
     }
   }
 }
