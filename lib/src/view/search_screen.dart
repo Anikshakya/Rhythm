@@ -35,32 +35,44 @@ class SearchScreen extends GetView<AppSearchController> {
   Widget _buildSongsTab() {
     final playerCtrl = Get.find<PlayerController>();
 
-    final filteredSongs =
-        libCtrl.musicFiles.where((song) {
-          final lowerTitle = song.meta.title.toLowerCase();
-          final lowerArtist = song.meta.artist.toLowerCase();
-          final lowerAlbum = song.meta.album.toLowerCase();
-          return lowerTitle.contains(controller.searchQuery.value) ||
-              lowerArtist.contains(controller.searchQuery.value) ||
-              lowerAlbum.contains(controller.searchQuery.value);
-        }).toList();
+    return Obx(() {
+      final query = controller.searchQuery.value.toLowerCase();
 
-    return ListView.builder(
-      itemCount: filteredSongs.length,
-      padding: const EdgeInsets.only(bottom: 210),
-      itemBuilder: (context, index) {
-        final song = filteredSongs[index];
-        final songId = Uri.file(song.file.path).toString();
-        return Obx(
-          () => SongTile(
-            song: song,
-            isCurrent: playerCtrl.currentId!.value == songId,
-            onTap: () => _playLocalSongs(filteredSongs, index),
-          ),
-        );
-      },
-    );
+      final filteredSongs =
+          libCtrl.musicFiles.where((song) {
+            final lowerTitle = song.meta.title.toLowerCase();
+            final lowerArtist = song.meta.artist.toLowerCase();
+            final lowerAlbum = song.meta.album.toLowerCase();
+
+            return lowerTitle.contains(query) ||
+                lowerArtist.contains(query) ||
+                lowerAlbum.contains(query);
+          }).toList();
+
+      if (filteredSongs.isEmpty) {
+        return const Center(child: Text('No matching songs found.'));
+      }
+
+      return ListView.builder(
+        itemCount: filteredSongs.length,
+        padding: const EdgeInsets.only(bottom: 210),
+        itemBuilder: (context, index) {
+          final song = filteredSongs[index];
+          final songId = Uri.file(song.file.path).toString();
+
+          return Obx(
+            () => SongTile(
+              song: song,
+              isCurrent: playerCtrl.currentId!.value == songId,
+              onTap: () => _playLocalSongs(filteredSongs, index),
+            ),
+          );
+        },
+      );
+    });
   }
+
+
 
   Widget _buildOnlineTab() {
     return Obx(() {
