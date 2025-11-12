@@ -1,4 +1,6 @@
 // FolderDetailScreen (stateless)
+// ignore_for_file: depend_on_referenced_packages
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';

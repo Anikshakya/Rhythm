@@ -3,7 +3,7 @@ import 'dart:math';
 import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
+// ignore: depend_on_referenced_packages
 import 'package:rxdart/rxdart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -246,6 +246,8 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
 // Main Application and Screens
 // =======================================================
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -257,8 +259,10 @@ class MyApp extends StatelessWidget {
 }
 
 class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+
   @override
-  _MainScreenState createState() => _MainScreenState();
+  State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
@@ -954,6 +958,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 final processingState =
                     snapshot.data ?? AudioProcessingState.idle;
                 return Text(
+                  // ignore: deprecated_member_use
                   "Processing state: ${describeEnum(processingState)}",
                 );
               },
@@ -1161,7 +1166,7 @@ class LocalMusicScanner {
         if (_scannedFiles > 15000) break;
       }
     } catch (e) {
-      print('Scan error in ${dir.path}: $e');
+      log('Scan error in ${dir.path}: $e' as num);
     }
     return music;
   }
@@ -1182,7 +1187,7 @@ class SeekBar extends StatefulWidget {
   final ValueChanged<Duration>? onChanged;
   final ValueChanged<Duration>? onChangeEnd;
 
-  SeekBar({
+  const SeekBar({super.key, 
     required this.duration,
     this.showDurations,
     required this.position,
@@ -1192,7 +1197,7 @@ class SeekBar extends StatefulWidget {
   });
 
   @override
-  _SeekBarState createState() => _SeekBarState();
+  State<SeekBar> createState() => _SeekBarState();
 }
 
 class _SeekBarState extends State<SeekBar> {
@@ -1516,9 +1521,13 @@ class AudioMetadata {
   static Uint8List? _decodeApic(Uint8List data) {
     try {
       var i = 1;
-      while (i < data.length && data[i] != 0) i++;
+      while (i < data.length && data[i] != 0) {
+        i++;
+      }
       i += 2; // skip null + picture type
-      while (i < data.length && data[i] != 0) i++;
+      while (i < data.length && data[i] != 0) {
+        i++;
+      }
       i++;
       return data.sublist(i);
     } catch (_) {
@@ -1545,7 +1554,6 @@ class AudioMetadata {
 
       // ✅ Check FLAC file signature
       if (utf8.decode(bytes.sublist(0, 4)) != "fLaC") {
-        print("❌ Not a valid FLAC file");
         return meta;
       }
 
@@ -1581,7 +1589,7 @@ class AudioMetadata {
         offset += length;
       }
     } catch (e) {
-      print('❌ Error reading FLAC: $e');
+      debugPrint('❌ Error reading FLAC: $e');
     }
 
     return meta;
@@ -1646,7 +1654,7 @@ class AudioMetadata {
         }
       }
     } catch (e) {
-      print('❌ Failed to parse Vorbis comments: $e');
+      debugPrint('❌ Failed to parse Vorbis comments: $e');
     }
   }
 
@@ -1671,10 +1679,10 @@ class AudioMetadata {
       offset += 4;
 
       final imgBytes = data.sublist(offset, offset + imgDataLength);
-      print("✅ FLAC album art extracted (${mime}, ${imgBytes.length} bytes)");
+      debugPrint("✅ FLAC album art extracted ($mime, ${imgBytes.length} bytes)");
       return Uint8List.fromList(imgBytes);
     } catch (e) {
-      print('⚠️ Failed to parse FLAC picture: $e');
+      debugPrint('⚠️ Failed to parse FLAC picture: $e');
       return null;
     }
   }

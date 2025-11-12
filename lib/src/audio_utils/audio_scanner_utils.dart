@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -134,7 +135,7 @@ class LocalMusicScanner {
         if (_scannedFiles > 15000) break;
       }
     } catch (e) {
-      print('Scan error in ${dir.path}: $e');
+      log('Scan error in ${dir.path}: $e');
     }
     return music;
   }

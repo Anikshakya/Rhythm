@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 
 class MiniplayerWillPopScope extends StatefulWidget {
   const MiniplayerWillPopScope({
-    Key? key,
+    super.key,
     required this.child,
     required this.onWillPop,
-  }) : super(key: key);
+  });
 
   final Widget child;
+  // ignore: deprecated_member_use
   final WillPopCallback onWillPop;
 
   @override
+  // ignore: library_private_types_in_public_api
   _MiniplayerWillPopScopeState createState() => _MiniplayerWillPopScopeState();
 
   static _MiniplayerWillPopScopeState? of(BuildContext context) {

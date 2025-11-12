@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -10,6 +12,7 @@ import 'package:rhythm/src/player/full_screen_player.dart';
 import 'package:rhythm/src/player/seek_bar.dart';
 import 'package:rhythm/src/widgets/custom_image.dart';
 
+// ignore: depend_on_referenced_packages
 import 'package:rxdart/rxdart.dart' as rx;
 
 class MiniPlayer extends StatelessWidget {

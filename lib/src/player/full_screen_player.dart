@@ -1,4 +1,6 @@
 // FullScreenPlayer (stateless)
+// ignore_for_file: deprecated_member_use
+
 import 'dart:ui';
 
 import 'package:audio_service/audio_service.dart';
@@ -12,6 +14,7 @@ import 'package:rhythm/src/player/controls.dart';
 import 'package:rhythm/src/player/miniplayer.dart';
 import 'package:rhythm/src/player/seek_bar.dart';
 import 'package:rhythm/src/widgets/sleep_timer_button.dart';
+// ignore: depend_on_referenced_packages
 import 'package:rxdart/rxdart.dart' as rx;
 
 class FullScreenPlayer extends StatelessWidget {

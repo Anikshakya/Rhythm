@@ -12,6 +12,7 @@ import 'package:rhythm/examples/dragable_player/miniplayer/miniplayer.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:audio_service/audio_service.dart';
 import 'dart:math';
+// ignore: depend_on_referenced_packages
 import 'package:rxdart/rxdart.dart' as rx;
 
 void main() async {
@@ -114,14 +115,14 @@ class MusicController extends GetxController {
   Future<void> scanLocalAudio() async {
     if (Platform.isAndroid || Platform.isIOS) {
       final status = await Permission.storage.request();
-      print("Storage permission status: $status");
+      debugPrint("Storage permission status: $status");
       if (!status.isGranted) {
         Get.snackbar('Permission', 'Storage permission required.');
         return;
       }
       if (Platform.isAndroid) {
         final notificationStatus = await Permission.notification.request();
-        print("Notification permission status: $notificationStatus");
+        debugPrint("Notification permission status: $notificationStatus");
         if (!notificationStatus.isGranted) {
           Get.snackbar('Permission', 'Notification permission required.');
         }
@@ -133,14 +134,14 @@ class MusicController extends GetxController {
       allowedExtensions: ['mp3', 'm4a', 'wav', 'aac', 'ogg'],
     );
     if (result == null) {
-      print("No files picked");
+      debugPrint("No files picked");
       return;
     }
     final picked =
         result.files
             .where((f) => f.path != null && File(f.path!).existsSync())
             .map((f) {
-              print("Picked file: ${f.path}");
+              debugPrint("Picked file: ${f.path}");
               return Song(
                 title: f.name.split('.').first,
                 artist: 'Unknown',
@@ -159,14 +160,14 @@ class MusicController extends GetxController {
 
   Future<void> playIndex(int index) async {
     if (index < 0 || index >= songs.length) {
-      print("Invalid index: $index, songs length: ${songs.length}");
+      debugPrint("Invalid index: $index, songs length: ${songs.length}");
       return;
     }
 
     final requestId = ++_playRequestId;
     await Future.delayed(const Duration(milliseconds: 100));
     if (requestId != _playRequestId) {
-      print("Cancelled play request $requestId");
+      debugPrint("Cancelled play request $requestId");
       return;
     }
 
@@ -185,7 +186,7 @@ class MusicController extends GetxController {
         isPlayingVN.value = true;
       }
     } catch (e, st) {
-      print("Play error: $e\n$st");
+      debugPrint("Play error: $e\n$st");
       if (requestId == _playRequestId) {
         Get.snackbar(
           'Error',
@@ -201,13 +202,13 @@ class MusicController extends GetxController {
 
   Future<void> _setPlaylist() async {
     if (songs.isEmpty) {
-      print("No songs to set in playlist");
+      debugPrint("No songs to set in playlist");
       Get.snackbar('Error', 'No songs available');
       currentIndex.value = -1;
       return;
     }
     final mediaItems = songs.map((s) => s.toMediaItem()).toList();
-    print("Setting playlist with ${mediaItems.length} items");
+    debugPrint("Setting playlist with ${mediaItems.length} items");
     await audioHandler.updateQueue(mediaItems, initialIndex: 0);
     originalOrder = List.generate(songs.length, (index) => index);
     shuffledOrder = List.from(originalOrder)..shuffle();
@@ -261,7 +262,7 @@ class MusicController extends GetxController {
 
       await playIndex(nextIndex);
     } catch (e, st) {
-      print("Next song error: $e\n$st");
+      debugPrint("Next song error: $e\n$st");
       Get.snackbar('Error', 'Failed to play next song');
     } finally {
       isLoading.value = false;
@@ -309,7 +310,7 @@ class MusicController extends GetxController {
 
       await playIndex(prevIndex);
     } catch (e, st) {
-      print("Previous song error: $e\n$st");
+      debugPrint("Previous song error: $e\n$st");
       Get.snackbar('Error', 'Failed to play previous song');
     } finally {
       isLoading.value = false;
@@ -337,10 +338,10 @@ class MusicController extends GetxController {
       shuffledOrder = List<int>.generate(songs.length, (i) => i);
     }
 
-    print('toggleShuffle -> isShuffling: ${isShuffling.value}');
-    print('originalOrder: $originalOrder');
-    print('shuffledOrder: $shuffledOrder');
-    print('currentIndex: ${currentIndex.value}');
+    debugPrint('toggleShuffle -> isShuffling: ${isShuffling.value}');
+    debugPrint('originalOrder: $originalOrder');
+    debugPrint('shuffledOrder: $shuffledOrder');
+    debugPrint('currentIndex: ${currentIndex.value}');
   }
 
   void toggleLoopMode() {
@@ -435,7 +436,7 @@ class YouTubeController extends GetxController {
       // Take first 20 results
       final songs =
           searchResults.take(20).map((video) {
-            print("Trending song: ${video.title}, URL: ${video.url}");
+            debugPrint("Trending song: ${video.title}, URL: ${video.url}");
             return Song(
               title: video.title,
               artist: video.author,
@@ -458,7 +459,7 @@ class YouTubeController extends GetxController {
         );
       }
     } catch (e) {
-      print("YouTube trending error: $e");
+      debugPrint("YouTube trending error: $e");
       Get.snackbar('Error', 'Failed to fetch trending songs: $e');
     } finally {
       isLoadingMore.value = false;
@@ -481,7 +482,7 @@ class YouTubeController extends GetxController {
       final stream = await yt.search.getVideos('$query music');
       final songs = <Song>[];
       for (final video in stream.take(20)) {
-        print("Search result: ${video.title}, URL: ${video.url}");
+        debugPrint("Search result: ${video.title}, URL: ${video.url}");
         songs.add(
           Song(
             title: video.title,
@@ -503,7 +504,7 @@ class YouTubeController extends GetxController {
         Get.snackbar('No Results', 'No songs found for "$query".');
       }
     } catch (e) {
-      print("YouTube search error: $e");
+      debugPrint("YouTube search error: $e");
       Get.snackbar('Error', 'Failed to search songs: $e');
     } finally {
       isLoadingMore.value = false;
@@ -1508,7 +1509,7 @@ class PlayerUI extends StatelessWidget {
                             height: imageSize,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
-                              print("Image load error: $error");
+                              debugPrint("Image load error: $error");
                               return Icon(
                                 CupertinoIcons.music_note_2,
                                 color: Theme.of(context).colorScheme.onPrimary,

@@ -45,8 +45,9 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
 
     // 4. Update mediaItem when the current index changes (for playlists)
     _player.sequenceStateStream.listen((state) {
-      if (_isSettingSource)
+      if (_isSettingSource) {
         return; // Ignore updates during source setting to prevent glitches
+      }
       final index = state!.currentIndex;
       final currentQueue = queue.value;
       if (index < currentQueue.length) {
@@ -142,8 +143,8 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
 
   // Method to set repeat mode
   @override
-  Future<void> setRepeatMode(AudioServiceRepeatMode  mode) async {
-    await _player.setLoopMode(switch (mode) {
+  Future<void> setRepeatMode(AudioServiceRepeatMode  repeatMode) async {
+    await _player.setLoopMode(switch (repeatMode) {
       AudioServiceRepeatMode .none => LoopMode.off,
       AudioServiceRepeatMode .all => LoopMode.all,
       AudioServiceRepeatMode .one => LoopMode.one,
@@ -443,9 +444,13 @@ class AudioMetadata {
   static Uint8List? _decodeApic(Uint8List data) {
     try {
       var i = 1;
-      while (i < data.length && data[i] != 0) i++;
+      while (i < data.length && data[i] != 0) {
+        i++;
+      }
       i += 2; // skip null + picture type
-      while (i < data.length && data[i] != 0) i++;
+      while (i < data.length && data[i] != 0) {
+        i++;
+      }
       i++;
       return data.sublist(i);
     } catch (_) {
@@ -472,7 +477,7 @@ class AudioMetadata {
 
       // ✅ Check FLAC file signature
       if (utf8.decode(bytes.sublist(0, 4)) != "fLaC") {
-        print("❌ Not a valid FLAC file");
+        debugPrint("❌ Not a valid FLAC file");
         return meta;
       }
 
@@ -508,7 +513,7 @@ class AudioMetadata {
         offset += length;
       }
     } catch (e) {
-      print('❌ Error reading FLAC: $e');
+      debugPrint('❌ Error reading FLAC: $e');
     }
 
     return meta;
@@ -577,7 +582,7 @@ class AudioMetadata {
         }
       }
     } catch (e) {
-      print('❌ Failed to parse Vorbis comments: $e');
+      debugPrint('❌ Failed to parse Vorbis comments: $e');
     }
   }
 
@@ -602,10 +607,10 @@ class AudioMetadata {
       offset += 4;
 
       final imgBytes = data.sublist(offset, offset + imgDataLength);
-      print("✅ FLAC album art extracted (${mime}, ${imgBytes.length} bytes)");
+      debugPrint("✅ FLAC album art extracted ($mime, ${imgBytes.length} bytes)");
       return Uint8List.fromList(imgBytes);
     } catch (e) {
-      print('⚠️ Failed to parse FLAC picture: $e');
+      debugPrint('⚠️ Failed to parse FLAC picture: $e');
       return null;
     }
   }

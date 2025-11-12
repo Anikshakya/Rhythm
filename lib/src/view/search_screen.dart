@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+// ignore: depend_on_referenced_packages
 import 'package:path/path.dart' as path;
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 import 'package:rhythm/main.dart';
@@ -120,8 +121,9 @@ class SearchScreen extends GetView<AppSearchController> {
         }
       }
       final artistList = artists.keys.toList()..sort();
-      if (artistList.isEmpty)
+      if (artistList.isEmpty) {
         return const Center(child: Text('No matching artists found.'));
+      }
       return ListView.builder(
         itemCount: artistList.length,
         padding: const EdgeInsets.only(bottom: 210),
@@ -160,8 +162,9 @@ class SearchScreen extends GetView<AppSearchController> {
         }
       }
       final albumList = albums.keys.toList()..sort();
-      if (albumList.isEmpty)
+      if (albumList.isEmpty) {
         return const Center(child: Text('No matching albums found.'));
+      }
       return GridView.builder(
         padding: const EdgeInsets.only(bottom: 210, top: 20),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -246,8 +249,9 @@ class SearchScreen extends GetView<AppSearchController> {
         }
       }
       final folderList = folders.keys.toList()..sort();
-      if (folderList.isEmpty)
+      if (folderList.isEmpty) {
         return const Center(child: Text('No matching folders found.'));
+      }
       return ListView.builder(
         itemCount: folderList.length,
         padding: const EdgeInsets.only(bottom: 210),
@@ -298,7 +302,7 @@ class SearchScreen extends GetView<AppSearchController> {
                         borderRadius: BorderRadius.circular(30.0),
                       ),
                       filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                     ),
                   ),
                 ),

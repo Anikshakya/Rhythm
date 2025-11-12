@@ -144,6 +144,7 @@ class SleepTimerButton extends StatelessWidget {
                             selectedDuration = opt['duration'] as Duration;
                           }
                           if (selectedDuration != null) {
+                            // ignore: use_build_context_synchronously
                             Navigator.pop(dialogContext, selectedDuration);
                           }
                         },

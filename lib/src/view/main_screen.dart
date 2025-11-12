@@ -10,6 +10,7 @@ import 'package:rhythm/src/app_config/app_utils.dart';
 import 'package:rhythm/src/constant/constants.dart';
 import 'package:rhythm/src/controllers/library_controller.dart';
 import 'package:rhythm/src/controllers/player_controller.dart';
+// ignore: depend_on_referenced_packages
 import 'package:path/path.dart' as path;
 import 'package:rhythm/src/view/album_details.dart';
 import 'package:rhythm/src/view/app_drawer.dart';
@@ -284,7 +285,7 @@ class MainScreen extends GetView<LibraryController> {
                                 fillColor:
                                     Theme.of(
                                       context,
-                                    ).colorScheme.surfaceVariant,
+                                    ).colorScheme.surfaceContainerHighest,
                               ),
                             ),
                           ),

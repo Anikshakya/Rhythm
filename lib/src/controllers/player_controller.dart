@@ -1,6 +1,9 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
@@ -96,7 +99,7 @@ class PlayerController extends GetxController {
       await prefs.setInt('last_position', 0);
     } catch (e) {
       // Prevent crash if handler or prefs not ready
-      print('Error saving current state: $e');
+      debugPrint('Error saving current state: $e');
     }
   }
 
@@ -139,7 +142,7 @@ class PlayerController extends GetxController {
         await audioHandler.seek(lastPosition);
       }
     } catch (e) {
-      print('Error loading last state: $e');
+      debugPrint('Error loading last state: $e');
     }
   }
 }
