@@ -59,7 +59,6 @@ class OnlineTile extends StatelessWidget {
   }
 
   Widget _buildArt() {
-      final uri = item.artUri!;
-      return CustomImage(uri: uri.toString(), fit: BoxFit.cover);
+      return CustomImage(uri: item.artUri.toString(), fit: BoxFit.cover);
   }
 }
