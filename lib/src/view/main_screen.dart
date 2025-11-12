@@ -82,6 +82,32 @@ class MainScreen extends GetView<LibraryController> {
   }
 
   Widget _buildOnlineTab() {
+    final List<MediaItem> onlineItems = [
+      MediaItem(
+        id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
+        album: "Science Friday",
+        title: "A Salute To Head-Scratching Science (Online)",
+        artist: "Science Friday and WNYC Studios",
+        duration: const Duration(milliseconds: 5739820),
+        artUri: Uri.parse(
+          'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
+        ),
+      ),
+      MediaItem(
+        id: 'https://freepd.com/music/A%20Good%20Bass%20for%20Gambling.mp3',
+        title: 'A Good Bass for Gambling',
+        artist: 'Kevin MacLeod',
+        album: 'FreePD',
+        duration: Duration.zero,
+      ),
+      MediaItem(
+        id: 'https://freepd.com/music/A%20Surprising%20Encounter.mp3',
+        title: 'A Surprising Encounter',
+        artist: 'Kevin MacLeod',
+        album: 'FreePD',
+        duration: Duration.zero,
+      ),
+    ];
     if (onlineItems.isEmpty) {
       return const Center(child: Text('No online found.'));
     }

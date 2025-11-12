@@ -75,6 +75,20 @@ class SearchScreen extends GetView<AppSearchController> {
 
 
   Widget _buildOnlineTab() {
+    // Static online items
+    final List<MediaItem> onlineItems = [
+      MediaItem(
+        id: 'https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3',
+        album: "Science Friday",
+        title: "A Salute To Head-Scratching Science (Online)",
+        artist: "Science Friday and WNYC Studios",
+        duration: const Duration(milliseconds: 5739820),
+        artUri: Uri.parse(
+          'https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg',
+        ),
+      ),
+    ];
+
     return Obx(() {
       final filteredItems =
           onlineItems.where((item) {
@@ -85,8 +99,9 @@ class SearchScreen extends GetView<AppSearchController> {
                 lowerArtist.contains(controller.searchQuery.value) ||
                 lowerAlbum.contains(controller.searchQuery.value);
           }).toList();
-      if (filteredItems.isEmpty)
+      if (filteredItems.isEmpty) {
         return const Center(child: Text('No matching online found.'));
+      }
       return ListView.builder(
         itemCount: filteredItems.length,
         padding: const EdgeInsets.only(bottom: 210),
