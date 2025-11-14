@@ -12,7 +12,7 @@ import 'package:rhythm/src/controllers/player_controller.dart';
 import 'package:rhythm/src/controllers/search_controller.dart';
 import 'package:rhythm/src/controllers/sleep_timer_controller.dart';
 import 'package:rhythm/src/player/miniplayer.dart';
-import 'package:rhythm/src/view/main_screen.dart';
+import 'package:rhythm/src/view/splash_screen.dart';
 
 late AudioHandler audioHandler;
 
@@ -59,7 +59,7 @@ class MyApp extends StatelessWidget {
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         themeMode: appCtrl.themeMode.value,
-        home: const MainScreen(),
+        home: const SplashScreen(),
         builder: (context, child) => GlobalWrapper(child: child!),
       ),
     );

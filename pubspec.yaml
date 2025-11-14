@@ -44,6 +44,7 @@ dependencies:
   youtube_explode_dart: ^2.5.2
   shared_preferences: ^2.5.3
   cached_network_image: ^3.4.1
+  device_info_plus: ^10.1.0
 
 dev_dependencies:
   flutter_test:

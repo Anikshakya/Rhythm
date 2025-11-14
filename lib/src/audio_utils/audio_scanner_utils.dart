@@ -1,6 +1,7 @@
 import 'dart:developer';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
@@ -14,46 +15,46 @@ class LocalMusicScanner {
     'ogg',
   };
   int _scannedFiles = 0;
-
   Future<bool> requestPermission() async {
-     await Permission.notification.request();
-     await Permission.storage.request();
-     await Permission.audio.request();
-
-    // Request Storage Permission
-    var status = await Permission.storage.status;
-    if (!status.isGranted) {
-      status = await Permission.storage.request();
+    // Get Android SDK version
+    int sdkInt = 0;
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      sdkInt = androidInfo.version.sdkInt;
     }
 
-    // For Android 11+ (API 30+): Manage External Storage
-    if (Platform.isAndroid && await _getAndroidVersion() >= 30) {
-      final manage = await Permission.manageExternalStorage.status;
-      if (!manage.isGranted) {
-        await Permission.manageExternalStorage.request();
-      }
-      status = await Permission.manageExternalStorage.status;
-    }
-
-    // 🎵 Request Audio / Media Library Permission
+    // Request Audio Permission (READ_MEDIA_AUDIO on Android 13+)
     var audioStatus = await Permission.audio.status;
     if (!audioStatus.isGranted) {
       audioStatus = await Permission.audio.request();
+      if (audioStatus.isDenied || audioStatus.isPermanentlyDenied) {
+        audioStatus = await Permission.audio.status;  // Recheck after settings
+      }
     }
 
-    // 🔔 Request Notification Permission (Android 13+ / iOS 10+)
+    // Request Notification Permission
     var notifStatus = await Permission.notification.status;
     if (!notifStatus.isGranted) {
       notifStatus = await Permission.notification.request();
+      if (notifStatus.isDenied || notifStatus.isPermanentlyDenied) {
+        notifStatus = await Permission.notification.status;
+      }
     }
 
-    // Return true only if all essential permissions are granted
-    return status.isGranted && audioStatus.isGranted && notifStatus.isGranted;
-  }
+    // For full storage access on Android 11+ (if truly needed, e.g., beyond media)
+    bool manageGranted = true;  // Default true unless required
+    if (Platform.isAndroid && sdkInt >= 30) {
+      var manageStatus = await Permission.manageExternalStorage.status;
+      if (!manageStatus.isGranted) {
+        await Permission.manageExternalStorage.request();  // Opens settings
+        // Do not check immediately; inform user to grant and retry
+        // For demo, assume recheck on next call; in production, use lifecycle listener
+        manageGranted = false;  // Set false to prompt retry
+      }
+    }
 
-
-  Future<int> _getAndroidVersion() async {
-    return Platform.isAndroid ? 30 : 0;
+    // Return true if essential permissions are granted
+    return audioStatus.isGranted || manageGranted;
   }
 
   bool _isMusicFile(String path) {

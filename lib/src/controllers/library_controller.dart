@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:rhythm/src/audio_utils/audio_scanner_utils.dart';
 import 'package:rhythm/src/audio_utils/custom_audio_handler/custom_audio_handler_with_metadata.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +12,12 @@ class LibraryController extends GetxController {
   RxList<SongInfo> musicFiles = <SongInfo>[].obs;
   RxBool isScanning = false.obs;
   RxString? message = RxString("");
+
+  // @override
+  // void onInit() {
+  //   super.onInit();
+  //   scanner.requestPermission();
+  // }
 
   Future<void> loadSavedSongs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -45,10 +52,12 @@ class LibraryController extends GetxController {
     isScanning.value = true;
     musicFiles.clear();
     message!.value = 'Requesting permissions...';
+    // ignore: unused_local_variable
     final granted = await scanner.requestPermission();
-    if (!granted) {
+    if (granted == false) {
       isScanning.value = false;
       message!.value = 'Storage permission denied. Cannot scan local files.';
+      openAppSettings();
       return;
     }
     message!.value = 'Scanning directories...';
