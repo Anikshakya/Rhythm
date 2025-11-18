@@ -175,62 +175,63 @@ class CustomAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> skipToPrevious() => _player.seekToPrevious();
 
-  // @override
-  // Future<void> fastForward() async {
-  //   final newPosition = _player.position + const Duration(seconds: 10);
-  //   await seek(newPosition);
-  // }
+  @override
+  Future<void> fastForward() async {
+    final newPosition = _player.position + const Duration(seconds: 10);
+    await seek(newPosition);
+  }
 
-  // @override
-  // Future<void> rewind() async {
-  //   final newPosition = _player.position - const Duration(seconds: 10);
-  //   await seek(newPosition < Duration.zero ? Duration.zero : newPosition);
-  // }
+  @override
+  Future<void> rewind() async {
+    final newPosition = _player.position - const Duration(seconds: 10);
+    await seek(newPosition < Duration.zero ? Duration.zero : newPosition);
+  }
 
   /// Transform a just_audio event into an audio_service state.
   PlaybackState _transformEvent(PlaybackEvent event) {
-    final currentRepeatMode = switch (_player.loopMode) {
-      LoopMode.off => AudioServiceRepeatMode.none,
-      LoopMode.all => AudioServiceRepeatMode.all,
-      LoopMode.one => AudioServiceRepeatMode.one,
-    };
+    // final currentRepeatMode = switch (_player.loopMode) {
+    //   LoopMode.off => AudioServiceRepeatMode.none,
+    //   LoopMode.all => AudioServiceRepeatMode.all,
+    //   LoopMode.one => AudioServiceRepeatMode.one,
+    // };
 
-    final repeatIcon = switch (currentRepeatMode) {
-      AudioServiceRepeatMode.none => 'drawable/ic_repeat_off',
-      AudioServiceRepeatMode.all => 'drawable/ic_repeat_all',
-      AudioServiceRepeatMode.one => 'drawable/ic_repeat_one',
-      AudioServiceRepeatMode.group => 'drawable/ic_repeat_off',
-    };
-    final repeatControl = MediaControl.custom(
-      androidIcon: repeatIcon,
-      label: 'Repeat',
-      name: 'toggle_repeat',
-    );
+    // final repeatIcon = switch (currentRepeatMode) {
+    //   AudioServiceRepeatMode.none => 'drawable/ic_repeat_off',
+    //   AudioServiceRepeatMode.all => 'drawable/ic_repeat_all',
+    //   AudioServiceRepeatMode.one => 'drawable/ic_repeat_one',
+    //   AudioServiceRepeatMode.group => 'drawable/ic_repeat_off',
+    // };
+    // // final repeatControl = MediaControl.custom(
+    // //   androidIcon: repeatIcon,
+    // //   label: 'Repeat',
+    // //   name: 'toggle_repeat',
+    // // );
 
-    final shuffleEnabled = _player.shuffleModeEnabled;
-    final shuffleIcon =
-        shuffleEnabled ? 'drawable/ic_shuffle_on' : 'drawable/ic_shuffle_off';
-    final shuffleControl = MediaControl.custom(
-      androidIcon: shuffleIcon,
-      label: 'Shuffle',
-      name: 'toggle_shuffle',
-    );
+    // // final shuffleEnabled = _player.shuffleModeEnabled;
+    // // final shuffleIcon =
+    // //     shuffleEnabled ? 'drawable/ic_shuffle_on' : 'drawable/ic_shuffle_off';
+    // // final shuffleControl = MediaControl.custom(
+    // //   androidIcon: shuffleIcon,
+    // //   label: 'Shuffle',
+    // //   name: 'toggle_shuffle',
+    // // );
 
-    final hasPrevious =
-        (_player.loopMode != LoopMode.one) && _player.hasPrevious;
-    final hasNext = (_player.loopMode != LoopMode.one) && _player.hasNext;
-    final playPauseControl =
-        _player.playing ? MediaControl.pause : MediaControl.play;
+    // // final hasPrevious =
+    // //     (_player.loopMode != LoopMode.one) && _player.hasPrevious;
+    // // final hasNext = (_player.loopMode != LoopMode.one) && _player.hasNext;
+    final playPauseControl =  _player.playing ? MediaControl.pause : MediaControl.play;
 
     final controls = <MediaControl>[];
-    if (hasPrevious) controls.add(MediaControl.skipToPrevious);
+    // if (hasPrevious) 
+    controls.add(MediaControl.skipToPrevious);
     // controls.add(MediaControl.rewind);
     controls.add(playPauseControl);
-    controls.add(repeatControl);
-    controls.add(shuffleControl);
+    // controls.add(repeatControl);
+    // controls.add(shuffleControl);
     controls.add(MediaControl.stop);
     // controls.add(MediaControl.fastForward);
-    if (hasNext) controls.add(MediaControl.skipToNext);
+    // if (hasNext) 
+    controls.add(MediaControl.skipToNext);
 
     // List<int> compactIndices;
     // final prevOrRewindIndex =
